@@ -1,4 +1,4 @@
-# Late Pickup Radar — task runner.
+# Late Pickup Radar: task runner.
 PYTHON ?= python3
 VENV   := .venv
 PY     := $(VENV)/bin/python

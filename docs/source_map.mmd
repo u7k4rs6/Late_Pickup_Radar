@@ -1,1 +1,18 @@
-%% Source map diagram — filled in phase 1/7.
+%% Late Pickup Radar: source map (verified values in docs/source_map.md)
+flowchart LR
+  subgraph TLC["NYC TLC (owner)"]
+    S1["S1 HVFHV trips<br/>fhvhv_tripdata_2026-07.parquet<br/>20,921,249 rows, 511 MB"]
+    S2["S2 Taxi Zone Lookup<br/>taxi_zone_lookup.csv<br/>265 zones"]
+    S4["S4 HVFHV data dictionary<br/>PDF, license to company"]
+    S5["S5 Monthly aggregate report<br/>data_reports_monthly.csv"]
+  end
+  subgraph OM["Open-Meteo (owner)"]
+    S3["S3 Historical weather API<br/>hourly precipitation, temp, code"]
+  end
+  S1 -- "file: HTTP Parquet" --> RAW[("data/raw/2026-07/<br/>immutable + manifests")]
+  S2 -- "file: HTTP CSV" --> RAW
+  S3 -- "API: JSON" --> RAW
+  RAW -- "SQL: DuckDB load" --> WH[("raw.trips / raw.zones / raw.weather")]
+  S4 -. "reference: dim_company" .-> WH
+  S5 -. "sanity band: expected rows" .-> WH
+  WH --> DEC["Top zone x hour-of-week cells<br/>for driver incentives"]

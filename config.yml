@@ -3,24 +3,27 @@
 # Values marked PLACEHOLDER are PRD starting points to be tuned against the real profile.
 
 sources:
-  # Verified in Phase 1 — see docs/source_map.md.
-  trips_url_template: null
-  zones_url: null
-  weather_url: null
+  # Verified in phase 1 (2026-09-24): see docs/source_map.md for status codes and headers.
+  trips_url_template: https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_{month}.parquet
+  zones_url: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+  weather_url: https://archive-api.open-meteo.com/v1/archive
+  expected_counts_url: https://www.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv
+  data_dictionary_url: https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf
 
 weather:
-  latitude: null
-  longitude: null
-  timezone: America/New_York
+  # PENDING DECISION (phase 1 report): every Manhattan point snaps to a New Jersey grid cell.
+  latitude: 40.7829           # Central Park, the conventional NYC weather reference point
+  longitude: -73.9654
+  timezone: America/New_York  # PENDING: API local output is not DST-aware; see source_map S3
   hourly: [precipitation, temperature_2m, weather_code]
 
 kpi:
-  late_minutes: 10            # PLACEHOLDER — primary KPI threshold (PRD §1)
+  late_minutes: 10            # PLACEHOLDER: primary KPI threshold (PRD §1)
   sensitivity_minutes: [8, 15]
 
 thresholds:
-  rain_mm_per_hour: 0.5       # PLACEHOLDER — is_rainy (PRD §6.2)
-  trust_floor: 0.95           # PLACEHOLDER — M5 hard-fail floor (PRD §7)
+  rain_mm_per_hour: 0.5       # PLACEHOLDER: is_rainy (PRD §6.2)
+  trust_floor: 0.95           # PLACEHOLDER: M5 hard-fail floor (PRD §7)
 
 download:
   attempts: 3

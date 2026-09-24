@@ -1,1 +1,1 @@
-"""model stage — implemented in a later phase (see docs/PRD.md Section 10)."""
+"""model stage: implemented in a later phase (see docs/PRD.md Section 10)."""
