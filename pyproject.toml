@@ -1,0 +1,37 @@
+[project]
+name = "late-pickup-radar"
+version = "0.1.0"
+description = "Monthly late-pickup KPI pipeline from NYC TLC HVFHV trip data to a driver-incentive decision."
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.1",
+    "pyarrow>=17",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "pyyaml>=6.0",
+    "matplotlib>=3.9",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pipeline"]
+
+[tool.setuptools.package-data]
+pipeline = ["sql/*.sql", "validation_rules.yml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

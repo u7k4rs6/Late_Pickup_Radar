@@ -1,0 +1,29 @@
+# Late Pickup Radar configuration. No magic numbers in code: every threshold lives here
+# or in pipeline/validation_rules.yml, and each one is justified in docs/assumptions.md.
+# Values marked PLACEHOLDER are PRD starting points to be tuned against the real profile.
+
+sources:
+  # Verified in Phase 1 — see docs/source_map.md.
+  trips_url_template: null
+  zones_url: null
+  weather_url: null
+
+weather:
+  latitude: null
+  longitude: null
+  timezone: America/New_York
+  hourly: [precipitation, temperature_2m, weather_code]
+
+kpi:
+  late_minutes: 10            # PLACEHOLDER — primary KPI threshold (PRD §1)
+  sensitivity_minutes: [8, 15]
+
+thresholds:
+  rain_mm_per_hour: 0.5       # PLACEHOLDER — is_rainy (PRD §6.2)
+  trust_floor: 0.95           # PLACEHOLDER — M5 hard-fail floor (PRD §7)
+
+download:
+  attempts: 3
+  backoff_seconds: 2
+  timeout_seconds: 60
+  chunk_bytes: 1048576

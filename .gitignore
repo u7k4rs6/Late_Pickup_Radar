@@ -1,0 +1,13 @@
+# data: raw and warehouse are never committed; data/sample/ is.
+data/raw/
+data/warehouse/
+outputs/demo/
+logs/
+*.part
+
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
