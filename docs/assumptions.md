@@ -1,7 +1,80 @@
 # Assumptions, thresholds and KUAL
 
-Every threshold in `config.yml` / `pipeline/validation_rules.yml` is justified here.
-Every place where real data contradicted the PRD is logged under "PRD deviations".
+Month: **2026-07** (20,921,249 HVFHV trips). Read the first two sections for the picture; the
+thresholds and the dated decision log below them are the audit trail. Every threshold in
+`config.yml` / `pipeline/validation_rules.yml` is justified here, and every place where real data
+contradicted the PRD is logged, with the decision.
+
+## Known / Unknown / Assumption / Limitation
+
+**Known**
+- The trip file is complete: 20,921,249 rows, 511,176,663 bytes equal to Content-Length, 31/31
+  days and 744/744 hours with pickups, and within 62 rows (0.0003%) of TLC's own aggregate report.
+- 99.998% of rows pass every REJECT rule. The 376 quarantined rows are 291 R01 (a negative wait
+  with no pre-arrangement signal), 44 R03 (a wait over 180 min) and 41 R06 (over 65 mph).
+- The late-pickup rate is **10.02%** at 10 min (17.53% at 8, 2.69% at 15); p90 wait is 10.02 min.
+- Location and hour drive lateness; rain barely does. Late rates run from 3.4% to 37.8% across
+  borough x hour, while a rainy hour adds +0.9 points raw and +1.1 within the same hour of day.
+- The top neighbourhood cell is Williamsburg (North Side), Saturday 23:00: 33.5% late over 3,358
+  trips, 788 more late trips than the city rate predicts. A single ranking would be 100% airports
+  in its top 20.
+
+**Unknown**
+- Cancellations and unfulfilled requests are not in the file, so the KPI is conditional on a trip
+  happening; the rider who gave up waiting is invisible.
+- Which trips were booked in advance: there is no scheduling field. 366,740 clean trips (1.75%)
+  carry the on_scene-before-request signature (R12); about 12,500 more whole-minute requests
+  above chance (R14) may be reservations the signal misses.
+- What happened on the 6.6% of Uber trips whose on_scene equals pickup: arrival was not captured,
+  so their dwell (1,012,982 rows) cannot be known.
+- The real wait for Lyft WAV riders: only 41.98% of those trips can enter wait metrics.
+
+**Assumption**
+- Late means wait > 10 min, the observed p90, and the threshold is fixed across months. Re-deriving
+  it from each month's p90 would pin the KPI at ~10% forever.
+- Wait is request to pickup. Where on_scene is before request (R12), the request is a booking time,
+  not the rider's ask, and the row leaves wait metrics (the KPI would be 9.92% with them in).
+- One weather point: Central Park, whose reanalysis grid cell lies over New Jersey. Precipitation for
+  hour H comes from the row labelled H+1, because Open-Meteo sums the preceding hour. "Rainy" means
+  >= 0.5 mm, which gives 98 wet hours.
+- trip_time is trusted over the dropoff timestamp: the 661 trips that look faster than 65 mph by
+  timestamps end 20 s after they start while trip_time says ~22 min.
+- A decision cell needs n >= 200 trips (+/-4.2 points at a 10% rate). Airports are ranked
+  separately, split on the zone lookup's service_zone, never on the numbers.
+
+**Limitation**
+- One month, which includes the July 4 holiday weekend; 35 of the 98 wet hours fall on Jul 5-6.
+- Weather is model reanalysis at a single point, not a station network.
+- Dwell coverage differs by company (Uber 93.40%, Lyft 99.86%), so dwell comparisons rest on
+  different shares of trips.
+- Base names are not available (only IDs), and the data dictionary (2025-03-18) is stale against
+  the file (it calls on_scene WAV-only; it is populated on every row).
+- A full-month run needs about 6 GB of free RAM (peak RSS 5.3 GB, 4:15 at 2 threads).
+
+## Resolved decisions
+
+Every item that was open during the build, with the decision taken. Details are in the log below.
+
+| Item | Decision | Log |
+|---|---|---|
+| on_scene is never null, contradicting R09's premise | R09 kept as a guard; new FLAG R13 for on_scene >= pickup; dwell only where arrival was captured | F1, F14 |
+| Lyft WAV negative waits: split R01 by WAV? | No split: the pattern is in every segment. R01 rejects only negative waits with no pre-arrangement signal (291); the rest are R12 | F2, F10 |
+| Open-Meteo local output is not DST-aware | Request GMT, convert to America/New_York; tests assert 743 / 721 / 744 hours | F4 |
+| Weather coordinate | Central Park; the NJ grid cell is a stated limitation | F5 |
+| Scheduled rides | Option (a): FLAG R12 excludes them from wait metrics; KPI reported with them in and out | F11 |
+| Promote R14 (whole-minute requests)? | No: 1.13x the late rate of the rest, below the 2x bar; stays a sensitivity line | F18 |
+| R03 cap | 180 min, the break in the tail (not p99.9 = 29.7 min) | F13 |
+| R02 (dropoff <= pickup) | FLAG, not REJECT: timestamp defects on real trips | F19 |
+| Trip duration source | trip_time; PRD R07's "we trust timestamps" reversed | F15 |
+| Business-key duplicates | Not duplicates: pooled riders. R05 stays exact-row only | F16 |
+| Aggregate report delta | Sanity band (1%), never a hard check; both numbers in the manifest | F8 |
+| Base names | Skipped; dim_company from the data dictionary | F7 |
+| Airports dominate the ranking | Two lists, same rule, split on zone type; airports escalate to airport ops | F24, F25 |
+| Demo top cells on a 52k sample | make demo prints the committed full-month cells, labelled as such | F25 |
+| metrics.csv size | Reporting grains only (202 rows); cells only in incentive_cells.csv | F26 |
+| M5 | Three lines: trusted 99.998%, wait-eligible 98.245%, dwell coverage 95.156% | F21 |
+| Resource envelope | 2 threads, 4 GB DuckDB limit; measured 4:15 and 5.3 GB peak | Phase 5 |
+| Hard-killed runs | A lock per output; the next run sweeps and records a killed run | Phase 5 |
 
 ## Thresholds
 
@@ -21,7 +94,7 @@ Every place where real data contradicted the PRD is logged under "PRD deviations
 | `incentives.min_cell_trips` | 200 | config.yml | F22: binomial SE 2.1 pts at a 10% rate; keeps 93.7% of zone-known wait-eligible trips |
 | `kpi.r14_promotion_ratio` | 2.0 | config.yml | Agreed in review; observed ratio 1.13x (F18) |
 | R12 / R13 / R14 | no threshold | validation_rules.yml | Strict inequalities / equality on the raw timestamps; F11, F14, F17 |
-## PRD deviations
+## Decision log (dated findings, oldest first)
 
 ### Findings from phase 1 (decisions recorded 2026-09-25 after review)
 
@@ -141,7 +214,7 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
   19,257,926 of the 20,552,912 wait-eligible trips with a known pickup zone (93.7%).
 - **F23 Cells are keyed on the request timestamp.** Day-of-week and hour come from the rider's ask,
   which is when supply is needed; the pickup can fall in the next hour.
-- **F24 The airports dominate the ranking (open decision).** All 20 of the top 20 cells are
+- **F24 The airports dominate the ranking (resolved in F25).** All 20 of the top 20 cells are
   LaGuardia or JFK, 21:00-00:00. The delay there is on the supply side: at LaGuardia late at night
   the median request-to-arrival is 9.2 min (3.9 min in the daytime) while dwell stays under a minute
   (0.87). The first non-airport cell ranks 45th (Williamsburg, Saturday 23:00), then a
@@ -221,27 +294,4 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
 - **Speed.** The offline run on the committed sample takes 3.1 s wall at 392 MB peak RSS with
   default console output (budget: 30 s).
 
-### Notes for the demo judgement call (to finalise after review)
-
-Timestamps don't always mean what their field names say. Three of them fail in different ways:
-- `request_datetime` is the rider's ask for on-demand trips, but for reservations it is the booked
-  pickup time. That is why 1.2% of trips have a negative wait.
-- `on_scene_datetime` is documented as WAV-only, yet it is populated on every row, and for 6.6%
-  of Uber trips it is just the pickup time copied in.
-- `dropoff_datetime` sometimes lands 20 seconds after pickup on a 20-minute trip.
-
-The FDE call is not to fix any of these. We classify rows by what their timestamps can support:
-- the KPI uses only rows where request means "asked";
-- dwell uses only rows where arrival was captured;
-- duration uses only rows where the two duration sources agree.
-
-Each exclusion is a FLAG with a count, and the KPI is reported with the exclusions undone. The
-alternative, the PRD's literal R01, would have quarantined 55% of Lyft WAV trips as "errors".
-
-## Known
-## Unknown
-## Assumption
-## Limitation
-
-- Target month 2026-07 includes the July 4 holiday (Saturday); zone x hour-of-week cells average
-  over ~4.4 weeks, so the holiday weekend is diluted, not removed.
+The judgement call built from these findings is written up in README section 13.

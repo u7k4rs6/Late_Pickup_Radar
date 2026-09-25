@@ -228,6 +228,15 @@ def airport_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
     )
 
 
+def cells_or_note(df: pd.DataFrame, inc: dict[str, Any]) -> str:
+    if len(df):
+        return table(df)
+    return (
+        f"_No cell reaches n >= {inc['min_cell_trips']} trips in this run (a sample cannot). The "
+        "decision lists are in the committed full-month evidence, `outputs/2026-07/evidence.md`._"
+    )
+
+
 def findings(m: MetricsResult, lk: Lookup, cfg: dict[str, Any]) -> list[str]:
     """Plain-language findings, each computed from the numbers so it stays true."""
     main = cfg["kpi"]["late_minutes"]
@@ -476,7 +485,7 @@ def write_report(
         "request. Pickup zones 264/265 and pre-arranged rides are excluded. Same rule for both "
         "lists; the split is on zone type (`service_zone` Airports / EWR in the zone lookup).",
         "",
-        table(neighbourhood_table(m.cells, inc["top_n"])),
+        cells_or_note(neighbourhood_table(m.cells, inc["top_n"]), inc),
         "",
         f"## Top {inc['airport_top_n']} airport cells: escalate to airport ops",
         "",
@@ -485,7 +494,7 @@ def write_report(
         "above the zone's own month median while dwell (driver at the curb, rider not yet in) "
         "stays short.",
         "",
-        table(airport_table(m.cells, inc["airport_top_n"])),
+        cells_or_note(airport_table(m.cells, inc["airport_top_n"]), inc),
         "",
         "## Charts",
         "",

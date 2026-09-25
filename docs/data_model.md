@@ -31,7 +31,7 @@ REJECT rule) and the raw reference tables. Diagrams: [`workflow.mmd`](workflow.m
 |---|---|---|---|
 | `fact_trip` | one row per clean trip | `clean.trips` | Every FLAG column travels in, so each metric's exclusion is a WHERE clause on a named flag |
 | `fact_trip_event` | one row per event | `fact_trip` | 4 rows where on_scene < pickup, 3 otherwise; `event_source` names the raw column. A missing arrival is absent, not faked |
-| `dim_zone` | zone | `raw.zones` | `is_unknown` for 264/265, keyed on ID (borough text differs between them) |
+| `dim_zone` | zone | `raw.zones` | `is_unknown` for 264/265, keyed on ID (borough text differs between them); `is_airport` from `service_zone` (Airports / EWR = zones 1, 132, 138) |
 | `dim_company` | license | config (data dictionary) | `source = data_dictionary_2025-03-18` |
 | `dim_base` | base ID | `clean.trips` | Names not available (F7) |
 | `dim_hour` | local hour of the month | `raw.weather` | Precipitation for hour H comes from the row labelled H+1 (Open-Meteo sums the preceding hour); `is_rainy` = >= 0.5 mm |
@@ -71,6 +71,14 @@ Output: `outputs/<month>/metrics.csv` (long format: metric, grain, dimensions, v
 | M4 | Rain sensitivity | late rate in rainy request hours minus dry; raw and within hour of day; at 0.5 and 2.5 mm | month; borough |
 | M5 | Data trust | trusted-row share, wait-eligible share, dwell coverage (all over rows in); per-rule reject share | month; rule; company x WAV |
 
-**Decision table:** `model.incentive_cells`, one row per pickup zone x request day-of-week x
-request hour. Ranked by excess late trips = (cell late rate - citywide late rate) x n, for cells
-with n >= 200 (`config.yml incentives.min_cell_trips`).
+**Decision table:** `model.incentive_cells` (exported as `outputs/<month>/incentive_cells.csv`),
+one row per pickup zone x request day-of-week x request hour. It is ranked by excess late trips =
+(cell late rate - citywide late rate) x n, for cells with n >= 200
+(`config.yml incentives.min_cell_trips`). The same rule ranks two lists split on
+`dim_zone.is_airport`:
+- `list = neighbourhood`: the driver-incentive decision.
+- `list = airport`: escalate to airport ops.
+
+`overall_rank` keeps the naive single ranking auditable; its top 20 in 2026-07 are all airports.
+Each cell also carries its median request-to-arrival and dwell, and the zone's month median
+request-to-arrival.
