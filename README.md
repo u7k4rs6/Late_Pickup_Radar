@@ -1,5 +1,9 @@
 # Late Pickup Radar
 
+**Author:** Utkarsh Bahuguna. Built for the FDE Data Foundations assignment (classes 4-8, Track B):
+source reasoning, retrieval, validation, workflow and metrics, and a dependable pipeline, on real
+NYC TLC high-volume FHV data for July 2026.
+
 A monthly, repeatable pipeline from NYC TLC high-volume FHV (ride-hail) trip records to one
 decision: **which zone x hour-of-week cells get driver-supply incentives next month.**
 
@@ -18,6 +22,9 @@ decision: **which zone x hour-of-week cells get driver-supply incentives next mo
 
 Full evidence: [`outputs/2026-07/evidence.md`](outputs/2026-07/evidence.md) (one-page view:
 [`evidence.html`](outputs/2026-07/evidence.html)). Spec: [`docs/PRD.md`](docs/PRD.md).
+GitHub renders `evidence.html` as source, and its
+[raw link](https://raw.githubusercontent.com/u7k4rs6/Late_Pickup_Radar/main/outputs/2026-07/evidence.html)
+is served as plain text too: open the file locally (after cloning, or save the raw link as `.html`).
 
 ---
 
@@ -276,7 +283,8 @@ nothing partial), `make demo-show RULE=R12` (real rows behind a rule), `make dem
 - **`dropoff_datetime`** is not always the dropoff: 661 trips end 20 seconds after they start
   while `trip_time` says about 22 minutes.
 
-**Evidence.** Take the 366,752 trips where the driver was on scene before the request (R12). Four
+**Evidence.** Take the 366,752 trips where the driver was on scene before the request (R12; the
+rule table's 366,740 is the clean ones, because 12 were quarantined first by R06). Four
 independent signals say these are reservations, not clock errors:
 - **Destination:** 47% of those with a non-negative wait go to an airport, against 4.4% of other
   trips.
