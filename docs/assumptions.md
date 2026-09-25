@@ -49,7 +49,8 @@ contradicted the PRD is logged, with the decision.
   different shares of trips.
 - Base names are not available (only IDs), and the data dictionary (2025-03-18) is stale against
   the file (it calls on_scene WAV-only; it is populated on every row).
-- A full-month run needs about 6 GB of free RAM (peak RSS 5.3 GB, 4:15 at 2 threads).
+- A full-month run needs about 6 GB of free RAM (peak RSS 5.3-5.8 GB, 4:05-4:15 at 2 threads,
+  across two measured runs).
 
 ## Resolved decisions
 
@@ -73,7 +74,7 @@ Every item that was open during the build, with the decision taken. Details are 
 | Demo top cells on a 52k sample | make demo prints the committed full-month cells, labelled as such | F25 |
 | metrics.csv size | Reporting grains only (202 rows); cells only in incentive_cells.csv | F26 |
 | M5 | Three lines: trusted 99.998%, wait-eligible 98.245%, dwell coverage 95.156% | F21 |
-| Resource envelope | 2 threads, 4 GB DuckDB limit; measured 4:15 and 5.3 GB peak | Phase 5 |
+| Resource envelope | 2 threads, 4 GB DuckDB limit; measured 4:05-4:15 and a 5.3-5.8 GB peak | Phase 5 |
 | Hard-killed runs | A lock per output; the next run sweeps and records a killed run | Phase 5 |
 
 ## Thresholds

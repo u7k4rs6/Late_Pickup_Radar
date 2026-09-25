@@ -40,7 +40,7 @@ _Generated from `pipeline/validation_rules.yml` by the validate stage. Do not ed
 - **R09** 2026-07: 0 rows. The data dictionary (2025-03-18) says on_scene is WAV-only, but it is populated on every row. Kept as a guard.
 - **R10** 2026-07: 1,733 rows (of 1,987 with trip_miles = 0).
 - **R11** 2026-07: 4,331 rows (4,326 negative fare, 5 negative driver pay).
-- **R12** 2026-07: 366,752 rows (1.75%). 246,243 have a negative wait; 120,509 have wait >= 0 but a median dwell of 11 min. They go to airports far more often (29.7% and 47.3% of dropoffs vs 4.4% for other trips), are longer (median 8.7 vs 2.9 miles) and peak at 04:00-05:00 (4.5% of pickups vs 0.3% in the evening). 98.3% of Uber's negative-wait rows have a whole-minute request time vs 1.7% by chance.
+- **R12** 2026-07: 366,752 rows (1.75%). 246,243 have a negative wait; 120,509 have wait >= 0 but a median dwell of 11 min. They go to airports far more often (29.7% and 47.3% of dropoffs vs 4.4% for other trips), are longer (median 8.7 vs 2.9 miles) and peak before dawn (8.1% of 04:00 pickups vs about 0.5% in the evening; negative waits alone: 4.5% vs 0.3%). 98.3% of Uber's negative-wait rows have a whole-minute request time vs 1.7% by chance.
   - _PRD change:_ PRD R12 was informational ("noted, not fixed"). Now it removes rows from wait-based metrics, and absorbs the negative waits PRD R01 would have rejected.
 - **R13** 2026-07: on_scene = pickup on 6.60% of Uber trips vs 0.14% of Lyft; on_scene > pickup on 0.003% of Uber trips. Where on_scene < pickup, median dwell is 0.77 min for both companies.
   - _PRD change:_ New rule (not in PRD).

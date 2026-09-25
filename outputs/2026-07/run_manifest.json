@@ -57,7 +57,7 @@
     "duckdb": {
       "memory_limit": "4GB",
       "temp_directory": "data/warehouse/tmp",
-      "threads": 4
+      "threads": 2
     },
     "incentives": {
       "airport_service_zones": [
@@ -83,14 +83,14 @@
       "trust_floor": 0.95
     }
   },
-  "finished_utc": "2026-09-25T09:17:22+00:00",
-  "git_sha": "a32f2edaf590cd4ea5f542605ecea129b1e6c587",
+  "finished_utc": "2026-09-25T10:14:09+00:00",
+  "git_sha": "33078864197bd4a7caa808c04717cf976132e517",
   "kpi": {
     "late_minutes": 10,
     "late_rate": 0.100161,
     "weather_available": true
   },
-  "log_file": "logs/run_2026-07_20260925T144450.log",
+  "log_file": "logs/run_2026-07_20260925T154006.log",
   "outputs": "outputs/2026-07",
   "parameters": {
     "command": "run",
@@ -98,6 +98,7 @@
     "force": false,
     "month": "2026-07",
     "no_weather": false,
+    "offline": false,
     "quiet": true,
     "sample": null,
     "sample_file": null
@@ -261,7 +262,7 @@
       "severity": "FLAG"
     }
   ],
-  "run_id": "20260925T091450573147Z",
+  "run_id": "20260925T101006081044Z",
   "sources": {
     "expected_counts": {
       "bytes_written": 79774,
@@ -368,6 +369,7 @@
         "charts/rain_vs_dry.png",
         "charts/wait_distribution.png",
         "charts/wait_log_histogram.png",
+        "evidence.html",
         "evidence.md",
         "incentive_cells.csv",
         "metrics.csv",
@@ -383,7 +385,7 @@
       "rows_quarantined": 376
     }
   },
-  "started_utc": "2026-09-25T09:14:50+00:00",
+  "started_utc": "2026-09-25T10:10:06+00:00",
   "status": "success",
   "trust": {
     "dwell_coverage": 0.9515632168997176,
@@ -395,5 +397,5 @@
     "wait_eligible_share": 0.9824524816850084
   },
   "trusted_row_share": 0.9999820278416456,
-  "wall_time_seconds": 151.6
+  "wall_time_seconds": 243.2
 }

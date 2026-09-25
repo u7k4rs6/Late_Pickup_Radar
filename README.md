@@ -247,7 +247,8 @@ ingest -> load_raw -> profile -> validate -> model -> metrics -> report -> (atom
 **Requirements (measured, not estimated).** Python 3.11+, about 6 GB of free RAM, and about 6 GB of
 free disk (511 MB download, ~4 GB DuckDB warehouse). With the default `config.yml`
 (`duckdb.threads: 2`, `duckdb.memory_limit: 4GB`), a full-month run of 2026-07 (20,921,249 trips)
-took **4:15 wall time with a peak process RSS of 5.3 GB** on a 12-core, 10 GB laptop, with the
+took **4:05-4:15 wall time with a peak process RSS of 5.3-5.8 GB** (two measured runs) on a
+12-core, 10 GB laptop, with the
 trip file already downloaded (the first download adds about a minute). `memory_limit` caps DuckDB's
 buffer pool, not the whole process: on a smaller machine, lower it and DuckDB spills to
 `data/warehouse/tmp` and runs slower. The sample demo takes about 4 s and under 400 MB.
