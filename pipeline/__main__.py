@@ -78,7 +78,15 @@ def run(args: argparse.Namespace) -> int:
     from pipeline.metrics import compute_metrics
     from pipeline.model import build_model
     from pipeline.profile import profile as profile_stage
-    from pipeline.publish import make_staging, new_run_id, publish, record_failure
+    from pipeline.publish import (
+        RunInProgress,
+        acquire_lock,
+        make_staging,
+        new_run_id,
+        publish,
+        record_failure,
+        release_lock,
+    )
     from pipeline.report import write_report
     from pipeline.validate import load_rules, validate
 
@@ -110,8 +118,14 @@ def run(args: argparse.Namespace) -> int:
     }
     current = "ingest"
     staging: Path | None = None
+    lock: Path | None = None
     code = EXIT_INTERNAL
     try:
+        try:
+            lock = acquire_lock(resolve(cfg, "staging_dir"), out_name, out_dir, run_id)
+        except RunInProgress as exc:
+            log.error("%s; not starting", exc)
+            return EXIT_INTERNAL
         staging = make_staging(resolve(cfg, "staging_dir"), out_name, run_id)
         with stage("ingest"):
             result = ing.ingest(
@@ -236,6 +250,7 @@ def run(args: argparse.Namespace) -> int:
         staging = None
         if full_run:
             (ROOT / "docs" / "validation_rules.md").write_text(val.rules_doc)
+        release_lock(lock)
         log.info(
             "outputs published atomically: %s (status success, exit 0)", repo_relative(out_dir)
         )
@@ -261,6 +276,7 @@ def run(args: argparse.Namespace) -> int:
     manifest["wall_time_seconds"] = round(time.perf_counter() - t0, 1)
     manifest["finished_utc"] = utc_now()
     failed = record_failure(staging, out_dir, manifest, run_id)
+    release_lock(lock)
     log.error(
         "no outputs published; %s left untouched. Failed-run manifest: %s (exit %d)",
         repo_relative(out_dir),

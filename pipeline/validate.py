@@ -56,6 +56,11 @@ def flag(rule_id: str) -> str:
     return f"flag_{rule_id.lower()}"
 
 
+def share_text(x: float) -> str:
+    """A share as a percentage with no misleading rounding: 0.95 -> 95%, 0.99999 -> 99.999%."""
+    return f"{100 * x:.4f}".rstrip("0").rstrip(".") + "%"
+
+
 def excluding_flags(rules: dict[str, Any], family: str) -> list[str]:
     """flag_<id> columns whose rule excludes rows from a metric family (wait, dwell, zone...)."""
     return [flag(r["id"]) for r in rules["rules"] if family in (r.get("excludes") or [])]
@@ -184,7 +189,7 @@ def _console_table(counts: list[dict], trust: dict[str, Any], floor: float) -> N
     trusted = trust["trusted_row_share"]
     mark = "[green]✔[/green]" if trusted >= floor else "[red]✘[/red]"
     logging_setup.console.print(
-        f"trusted-row share   [bold]{trusted:.3%}[/bold] (floor {floor:.0%}) {mark}\n"
+        f"trusted-row share   [bold]{trusted:.3%}[/bold] (floor {share_text(floor)}) {mark}\n"
         f"wait-eligible share [bold]{trust['wait_eligible_share']:.3%}[/bold] (rows in the KPI)\n"
         f"dwell coverage      [bold]{trust['dwell_coverage']:.3%}[/bold] (on_scene < pickup)"
     )
@@ -246,8 +251,8 @@ def validate(
 
     if trusted < floor:
         exc = ValidationFailed(
-            f"trusted-row share {trusted:.3%} is below the floor {floor:.0%}, so metrics will "
-            f"not be published. Data behind the numbers: trusted-row share {trusted:.3%}, "
+            f"trusted-row share {trusted:.3%} is below the floor {share_text(floor)}, so metrics "
+            f"will not be published. Data behind the numbers: trusted-row share {trusted:.3%}, "
             f"wait-eligible share {trust['wait_eligible_share']:.3%}, dwell coverage "
             f"{trust['dwell_coverage']:.3%} of {rows_in:,} rows in; {rows_q:,} rows "
             "quarantined (per-rule counts in the failed run manifest; rows in quarantine.trips)."
@@ -373,7 +378,7 @@ def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trust) 
                             "line": "trusted-row share (not quarantined)",
                             "rows": trust["trusted_rows"],
                             "share_of_rows_in_pct": round(100 * trust["trusted_row_share"], 4),
-                            "note": f"floor {floor:.0%}; hard fail below it",
+                            "note": f"floor {share_text(floor)}; hard fail below it",
                         },
                         {
                             "line": "wait-eligible share (rows in the KPI and p90 wait)",

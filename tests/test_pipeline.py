@@ -219,3 +219,35 @@ def test_failed_history_survives_a_later_successful_publish(env):
     demo = env["outputs"] / "demo"
     assert len(list((demo / "failed").glob("*.json"))) == 1
     assert (demo / "metrics.csv").exists()
+
+
+def test_hard_killed_run_is_swept_and_recorded_by_the_next_run(env):
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()  # a real pid that no longer exists, like a SIGKILLed run
+    staging_root = env["outputs"] / ".staging"
+    (staging_root / "demo-20260101T000000000000Z" / "charts").mkdir(parents=True)
+    (staging_root / "demo.lock").write_text(json.dumps({"pid": dead.pid, "run_id": "old"}))
+
+    assert run(env, env["config"]()) == 0
+    assert staging_is_empty(env) or [p.name for p in staging_root.iterdir()] == []
+    killed = json.loads(
+        (
+            env["outputs"] / "demo" / "failed" / "run_manifest_20260101T000000000000Z.json"
+        ).read_text()
+    )
+    assert killed["status"] == "killed" and "not touched" in killed["error"]
+
+
+def test_a_live_run_holding_the_lock_blocks_a_second_run(env):
+    import os
+
+    staging_root = env["outputs"] / ".staging"
+    staging_root.mkdir(parents=True)
+    (staging_root / "demo.lock").write_text(json.dumps({"pid": os.getpid(), "run_id": "live"}))
+    (staging_root / "demo-live").mkdir()
+    assert run(env, env["config"]()) == 4
+    assert (staging_root / "demo-live").exists()  # the live run's staging is not swept
+    assert not (env["outputs"] / "demo").exists()

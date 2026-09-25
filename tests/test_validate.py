@@ -184,3 +184,10 @@ def test_sample_is_deterministic_and_keeps_business_key_groups():
         picks.append(con.execute("SELECT trip_id FROM stage.trips ORDER BY 1").fetchall())
     assert picks[0] == picks[1]
     assert 100 < len(picks[0]) < 300  # ~1/10 of 2,000
+
+
+@pytest.mark.parametrize(
+    ("share", "text"), [(0.95, "95%"), (0.99999, "99.999%"), (0.9999821, "99.9982%")]
+)
+def test_floor_is_never_rounded_into_a_different_number(share, text):
+    assert validate.share_text(share) == text

@@ -183,6 +183,16 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
   `data/warehouse/tmp`. Measured on the 2026-07 full month: 2:27 wall time, **peak process RSS
   5.7 GB**. The DuckDB limit caps its buffer pool, not every allocation, so a machine with less
   than ~6 GB free should lower `memory_limit` (DuckDB then spills more and runs slower).
+- **Hard kills (found in the phase 5 demos).** A killed process cannot clean up. When the
+  session running a full-month demo died on 2026-09-25, the published outputs were intact (the
+  swap had not happened), but a 64 KB staging directory was left and no failed manifest existed.
+  Now each run takes `outputs/.staging/<name>.lock` (pid + run_id). A live lock blocks a second
+  run of the same output (exit 4, nothing swept). A lock whose process is dead, or leftover staging
+  directories with no lock, mean the previous run was killed: the next run sweeps them and records
+  `failed/run_manifest_<old_run_id>.json` with `status: killed`.
+- **Floor text is never rounded (found in the phase 5 demos).** The first trust-floor demo printed
+  "below the floor 100%" for a 99.999% floor. Shares are now printed without rounding them into a
+  different number (`validate.share_text`), for the same reason M5 says 99.998%, not 100.00%.
 - **The warehouse is a working store, not an output.** A failed run can leave
   `data/warehouse/<month>.duckdb` with partly rebuilt `stage/clean/model` schemas; the next run
   rebuilds them from `raw.*`, and `raw.*` itself is swapped in atomically by load_raw.
