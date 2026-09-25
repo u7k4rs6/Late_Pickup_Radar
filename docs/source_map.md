@@ -15,6 +15,20 @@ by `pipeline/ingest.py` into `data/raw/<month>/manifest.json`.
 | S4 | Which company is `HV0003`? | License → company name | TLC HVFHV data dictionary (PDF) | Reference doc | NYC TLC | One row per license | Dictionary list is "as of September 2019"; base names not available from the SODA dataset checked (see S4) |
 | S5 | Is the file complete? | Expected trips for the month | TLC monthly aggregate report CSV | File (CSV) | NYC TLC | Month × license class | Aggregate is trips/day rounded; used as a sanity band, not a hard check |
 
+## Retrieval facts common to all sources
+
+- **User-Agent:** every request sends `Mozilla/5.0 (X11; Linux x86_64) late-pickup-radar/0.1`
+  (`config.yml download.user_agent`). nyc.gov (S4, S5) returns **403** to non-browser agents:
+  `python-requests/2.34.2`, `curl/8.5.0` and `Mozilla/5.0 (compatible; late-pickup-radar/0.1; +url)`
+  all got 403 on 2026-09-25. CloudFront (S1, S2) and Open-Meteo (S3) accept any agent.
+- **Encoding:** requests send `Accept-Encoding: identity`, so bytes on disk equal Content-Length
+  and the server object.
+- **Required vs optional:** S1, S2 and S3 are required. A failure is exit 2, and `--no-weather`
+  downgrades S3 to UNAVAILABLE. **S5 is optional:** it is a sanity band, so a fetch failure is a
+  WARN and the manifest records `expected_counts.status = unavailable`. S4 is a reference document
+  and is not fetched by the pipeline.
+- **Unpublished month:** CloudFront answers 403 (not 404) for a missing object; both mean exit 2.
+
 ## S1: TLC HVFHV trip records (Parquet)
 
 - **Discovery:** URLs taken from the links on the TLC trip record page

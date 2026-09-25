@@ -26,3 +26,9 @@ class StageCheckFailed(PipelineError):
     """An inter-stage invariant did not hold (e.g. raw.trips count != manifest)."""
 
     exit_code = EXIT_INTERNAL
+
+
+class ValidationFailed(PipelineError):
+    """Trusted-row share (M5) is below the configured floor: metrics are not published."""
+
+    exit_code = EXIT_VALIDATION_FAILED

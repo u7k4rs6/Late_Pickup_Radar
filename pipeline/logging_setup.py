@@ -19,6 +19,13 @@ console = Console(highlight=False)
 log = logging.getLogger(LOGGER_NAME)
 
 
+FILE_ONLY = {"console": False}  # pass as extra= for lines the console shows as a table
+
+
+def _console_filter(record: logging.LogRecord) -> bool:
+    return getattr(record, "console", True)
+
+
 def setup_logging(logs_dir: Path, month: str, *, quiet: bool) -> Path:
     """Log to console and to logs/run_<month>_<timestamp>.log. Returns the log path."""
     global console
@@ -39,7 +46,9 @@ def setup_logging(logs_dir: Path, month: str, *, quiet: bool) -> Path:
         log.addHandler(plain)
     else:
         console = Console(highlight=False)
-        log.addHandler(RichHandler(console=console, show_path=False, show_time=False, markup=False))
+        rich_handler = RichHandler(console=console, show_path=False, show_time=False, markup=False)
+        rich_handler.addFilter(_console_filter)
+        log.addHandler(rich_handler)
     return log_path
 
 

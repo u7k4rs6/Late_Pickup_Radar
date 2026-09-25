@@ -1,3 +1,243 @@
-# Business validation rules (REJECT / FLAG / ASSUME). Populated and tuned in phase 3
-# against the real profile; rendered into docs/validation_rules.md.
-rules: []
+# Business validation rules for HVFHV trips. Tuned against the 2026-07 full-month profile
+# (outputs/2026-07/profile.md). Rendered into docs/validation_rules.md by the validate stage.
+#
+# Severities (PRD 5.2):
+#   REJECT: row moved to quarantine.trips with rule_id; excluded from all metrics; never deleted.
+#           A row matching several REJECT rules is filed under the first one in this file's
+#           order; every match is also recorded in quarantine.trips.reject_rules.
+#   FLAG:   row kept in clean.trips with flag_<id> = true; `excludes` names the metric families
+#           the row is left out of (wait, dwell, trip_duration, speed, pay, zone).
+#   ASSUME: no row action; a documented interpretation the metrics depend on.
+#
+# `when` is a DuckDB boolean expression over stage.trips (raw columns plus wait_minutes,
+# dwell_minutes, trip_minutes, duration_gap_seconds, speed_mph, dup_rank, dup_count).
+# {placeholders} come from `params` or from the run ({month_start}, {month_end}).
+# A NULL result counts as "rule does not fire".
+#
+# `evidence` numbers come from the full-month profile (all rows, before any REJECT), so they
+# can differ by a few rows from validation_report.md, where FLAG counts are over clean rows.
+
+# Business key (PRD 5.1). Used for the duplicate profile and the deterministic --sample hash.
+# NOT a unique trip key: pooled riders share it (see R05).
+business_key:
+  - hvfhs_license_num
+  - dispatching_base_num
+  - pickup_datetime
+  - dropoff_datetime
+  - PULocationID
+  - DOLocationID
+  - trip_miles
+
+rules:
+  - id: R05
+    name: exact duplicate row
+    severity: REJECT
+    when: "dup_rank > 1"
+    rationale: >-
+      A byte-identical second copy of a trip is a double submission by the base. The first copy
+      (lowest file_row_number) stays in clean.trips with flag_r05_survivor = true.
+    evidence: >-
+      2026-07: 0 exact duplicates. The PRD business key has 20 collisions (20 pairs), but every
+      pair has different request times and fares: they are pooled riders sharing one vehicle,
+      not duplicates. Kept as a guard; business-key collisions are reported, never rejected.
+    prd_change: >-
+      Business-key collisions are NOT treated as duplicates (they are shared rides).
+
+  - id: R04
+    name: pickup outside target month
+    severity: REJECT
+    when: "pickup_datetime < {month_start} OR pickup_datetime >= {month_end}"
+    rationale: >-
+      Belongs to another month's file; keeping it would double count across months
+      (quarantined as out_of_period).
+    evidence: >-
+      2026-07: 0 rows. TLC partitions files by pickup time (footer pickup range is exactly the
+      month). Kept as a guard for re-published or future months.
+
+  - id: R02
+    name: dropoff not after pickup
+    severity: REJECT
+    when: "dropoff_datetime <= pickup_datetime"
+    rationale: A zero or negative trip cannot be a completed trip.
+    evidence: "2026-07: 2 rows."
+
+  - id: R01
+    name: pickup before request, not pre-arranged
+    severity: REJECT
+    when: "wait_minutes < 0 AND NOT (on_scene_datetime < request_datetime)"
+    rationale: >-
+      A negative wait with no sign of pre-arrangement is a clock or entry error.
+    evidence: >-
+      2026-07: 246,534 rows (1.18%) have pickup before request, but 246,243 of them (99.9%) also
+      have on_scene before request: the request timestamp was stamped after the driver arrived,
+      the signature of a pre-arranged ride (see R12). Only 291 rows are negative with no such
+      signal; those are rejected.
+    prd_change: >-
+      PRD R01 rejected every negative wait. That would quarantine 1.18% of trips, including 55%
+      of Lyft WAV trips, for a reason that is not a data error. Negative waits explained by
+      pre-arrangement move to FLAG R12; the residual stays REJECT. One rule for all segments,
+      not a WAV split: the pattern is ~1.1% in every non-WAV segment of both companies.
+
+  - id: R03
+    name: implausibly long wait
+    severity: REJECT
+    params:
+      max_wait_minutes: 180
+    when: "wait_minutes > {max_wait_minutes}"
+    rationale: >-
+      A wait over 3 hours is not an on-demand pickup wait; it is a data artefact.
+    evidence: >-
+      2026-07 tail: p99.9 = 29.7 min, p99.99 = 52.3 min, p99.999 = 91.7 min. The log-binned
+      distribution decays smoothly to ~180 min. Above 180 min there are 44 rows: 41 are Lyft,
+      requested between Jun 29 and Jul 7 and picked up up to 2 days later (34 of them > 1,000 min),
+      a submission artefact; 3 are Uber. Between 60 and 180 min the tail is continuous and
+      mostly Uber reservations (65% have a whole-minute request time, see R14), which R14 handles.
+      Cap stays at 180: it cuts exactly the detached artefact cluster.
+    prd_change: >-
+      PRD suggested deriving the cap from p99.9. p99.9 is 29.7 min and sits inside the smooth
+      body: it would reject ~21,000 genuinely long waits, which are exactly what the KPI measures.
+      The cap is set at the break in the tail instead (180 min, same number as the PRD placeholder).
+
+  - id: R06
+    name: implausible implied speed
+    severity: REJECT
+    params:
+      max_speed_mph: 65
+    when: "speed_mph > {max_speed_mph}"
+    rationale: >-
+      An average speed over 65 mph for a whole trip is physically implausible in and around NYC.
+      speed_mph = trip_miles / (trip_time / 3600); NULL when trip_time = 0 (29 rows), so a zero
+      duration never divides.
+    evidence: >-
+      2026-07: p99 = 36.8, p99.9 = 46.6, p99.99 = 54.0 mph. Counts per 5-mph bin fall ~5x per bin
+      from 50 to 65 mph (6,441 / 1,219 / 190), then scatter: 42 rows above 65 mph.
+      Timestamp-based speed would flag 661 rows, but those have a median dropoff - pickup of
+      20 seconds against a median trip_time of 1,305 s: the dropoff timestamp is broken there, not
+      the car fast. So speed uses trip_time, as the PRD formula does.
+
+  - id: R07
+    name: trip_time disagrees with timestamps
+    severity: FLAG
+    params:
+      max_gap_seconds: 120
+    when: "abs(duration_gap_seconds) > {max_gap_seconds}"
+    excludes: [trip_duration]
+    rationale: >-
+      Two sources of trip duration disagree by more than 2 minutes. We do not pick a winner:
+      the rows are left out of trip-duration metrics. Neither field enters the KPI.
+    evidence: >-
+      2026-07: 323,291 rows (1.55%); median difference 0 s, p99 absolute difference 161 s.
+    prd_change: >-
+      PRD said "we trust timestamps". The R06 profile shows dropoff timestamps 20 s after pickup
+      on trips with a 20-minute trip_time, so neither source is trusted blindly.
+
+  - id: R08
+    name: unknown pickup zone
+    severity: FLAG
+    params:
+      unknown_zone_ids: [264, 265]
+    when: "PULocationID IN {unknown_zone_ids}"
+    excludes: [zone]
+    rationale: >-
+      264 = Unknown, 265 = Outside of NYC. Kept in the city-wide KPI, excluded from zone-level
+      metrics and from the incentive ranking.
+    evidence: >-
+      2026-07: 1,245 rows (all 265, none 264). Dropoff in 264/265 is far more common (978,358
+      rows, mostly trips leaving NYC) but the decision is about pickup zones.
+
+  - id: R09
+    name: on_scene missing
+    severity: FLAG
+    when: "on_scene_datetime IS NULL"
+    excludes: [dwell]
+    rationale: Dwell cannot be computed; it is never imputed.
+    evidence: >-
+      2026-07: 0 rows. The data dictionary (2025-03-18) says on_scene is WAV-only, but it is
+      populated on every row. Kept as a guard.
+
+  - id: R10
+    name: zero miles with non-trivial duration
+    severity: FLAG
+    params:
+      min_trip_seconds: 60
+    when: "trip_miles = 0 AND trip_time > {min_trip_seconds}"
+    excludes: [speed]
+    rationale: Likely GPS failure; excluded from speed metrics only.
+    evidence: "2026-07: 1,733 rows (of 1,987 with trip_miles = 0)."
+
+  - id: R11
+    name: negative pay or fare
+    severity: FLAG
+    when: "driver_pay < 0 OR base_passenger_fare < 0"
+    excludes: [pay]
+    rationale: Refund or adjustment rows; excluded from pay metrics only.
+    evidence: "2026-07: 4,331 rows (4,326 negative fare, 5 negative driver pay)."
+
+  - id: R12
+    name: pre-arranged pickup (on_scene before request)
+    severity: FLAG
+    when: "on_scene_datetime < request_datetime"
+    excludes: [wait]
+    rationale: >-
+      The driver was at the pickup before the request timestamp, so request_datetime is not
+      the rider's on-demand ask (for reservations it is the booked pickup time). The row is a
+      real completed trip, so it is kept for volume, but request-to-pickup is not a rider wait:
+      excluded from wait-based metrics (the KPI and p90 wait). This is an assumption: the file
+      has no scheduling field.
+    evidence: >-
+      2026-07: 366,752 rows (1.75%). 246,243 have a negative wait; 120,509 have wait >= 0 but a
+      median dwell of 11 min. They go to airports far more often (29.7% and 47.3% of dropoffs vs
+      4.4% for other trips), are longer (median 8.7 vs 2.9 miles) and peak at 04:00-05:00 (4.5% of
+      pickups vs 0.3% in the evening). 98.3% of Uber's negative-wait rows have a whole-minute
+      request time vs 1.7% by chance.
+    prd_change: >-
+      PRD R12 was informational ("noted, not fixed"). Now it removes rows from wait-based
+      metrics, and absorbs the negative waits PRD R01 would have rejected.
+
+  - id: R13
+    name: dwell not captured (on_scene at or after pickup)
+    severity: FLAG
+    when: "on_scene_datetime >= pickup_datetime"
+    excludes: [dwell]
+    rationale: >-
+      on_scene equal to pickup means arrival was not captured and pickup was written in its
+      place: dwell there is zero by construction, not zero in reality. on_scene after pickup is
+      an impossible order. Dwell is computed only where on_scene < pickup, with coverage
+      reported beside it.
+    evidence: >-
+      2026-07: on_scene = pickup on 6.60% of Uber trips vs 0.14% of Lyft; on_scene > pickup on
+      0.003% of Uber trips. Where on_scene < pickup, median dwell is 0.77 min for both companies.
+    prd_change: New rule (not in PRD).
+
+  - id: R14
+    name: request on a whole minute (possible reservation)
+    severity: FLAG
+    when: "second(request_datetime) = 0"
+    excludes: []
+    rationale: >-
+      Reservation request times are booked on whole minutes. On-demand requests land on second 0
+      by chance 1 time in 60, so dropping ALL whole-minute rows removes most reservations while
+      removing on-demand trips at random (no bias). Not used to exclude rows from the headline
+      KPI; used for a KPI sensitivity line.
+    evidence: >-
+      2026-07 Uber: whole-minute requests are 2.3% of 0-10 min waits (chance = 1.7%), 34.4% of
+      30-60 min waits, 65.5% of 60-180 min waits, 98.3% of negative waits. Lyft does not show the
+      pattern outside negative waits (44.3%).
+    prd_change: New rule (not in PRD).
+
+assumptions:
+  - id: A01
+    name: wait is request to pickup
+    statement: >-
+      request_datetime is the rider's ask, so wait = pickup - request (not pickup - on_scene):
+      the rider experiences the whole wait. Where request_datetime is evidently not the ask
+      (R12), the row is excluded from wait metrics instead.
+  - id: A02
+    name: only completed trips
+    statement: >-
+      Every row is a completed trip; cancellations and unfulfilled requests are not in the
+      data, so the KPI is conditional on a trip happening (a Known Unknown).
+  - id: A03
+    name: one weather point for the city
+    statement: >-
+      Open-Meteo at Central Park (grid cell over New Jersey) represents the whole city.

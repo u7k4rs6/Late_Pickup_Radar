@@ -41,7 +41,7 @@ completeness:
   aggregate_band: 0.01             # WARN if |parquet rows - aggregate| / aggregate > 1%
 
 kpi:
-  late_minutes: 10                 # PLACEHOLDER: primary KPI threshold (PRD 1)
+  late_minutes: 10                 # = observed p90 (10.02 min, 2026-07); fixed across months, see assumptions.md
   sensitivity_minutes: [8, 15]
 
 thresholds:

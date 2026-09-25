@@ -68,15 +68,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
+    import duckdb
+
     from pipeline import ingest as ing
-    from pipeline.config import load_config, resolve
+    from pipeline.config import ROOT, load_config, resolve
     from pipeline.logging_setup import log, rows_line, setup_logging, stage
     from pipeline.manifest import git_sha, repo_relative, utc_now, write_json_atomic
+    from pipeline.profile import profile as profile_stage
+    from pipeline.validate import load_rules, validate
 
     cfg = load_config()
     sample_file = Path(args.sample_file).resolve() if args.sample_file else None
-    tag = f"{args.month}-sample" if sample_file else args.month
-    out_dir = resolve(cfg, "outputs_dir") / ("demo" if sample_file else args.month)
+    if sample_file:
+        tag, out_name = f"{args.month}-sample-file", "demo"
+    elif args.sample is not None:
+        tag = out_name = f"{args.month}-sample"
+    else:
+        tag = out_name = args.month
+    out_dir = resolve(cfg, "outputs_dir") / out_name
+    full_run = sample_file is None and args.sample is None
     log_path = setup_logging(resolve(cfg, "logs_dir"), args.month, quiet=args.quiet)
 
     t0 = time.perf_counter()
@@ -119,9 +129,39 @@ def run(args: argparse.Namespace) -> int:
             "raw_trips_rows": counts["trips"],
             "aggregate_report": result.completeness["expected_counts"],
         }
-        if args.sample is not None:
-            log.warning("--sample %s is applied from the profile stage (phase 3)", args.sample)
-        log.info("stages after load_raw are not implemented yet (phase 3+)")
+
+        rules = load_rules()
+        bounds = (str(ing.month_start(args.month)), str(ing.next_month_start(args.month)))
+        con = duckdb.connect(counts_db_path(cfg, tag))
+        try:
+            current = "profile"
+            with stage("profile"):
+                prof = profile_stage(con, args.month, cfg, rules, out_dir, bounds, args.sample)
+                rows_line("profile", prof.rows_in, prof.rows_out)
+                manifest["stages"]["profile"] = {
+                    "rows_in": prof.rows_in,
+                    "rows_out": prof.rows_out,
+                    "sample_modulus": prof.sample_modulus,
+                }
+
+            current = "validate"
+            with stage("validate"):
+                docs = ROOT / "docs" / "validation_rules.md" if full_run else None
+                val = validate(con, args.month, cfg, rules, out_dir, bounds, docs_path=docs)
+                rows_line("validate", val.rows_in, val.rows_clean)
+                manifest["stages"]["validate"] = {
+                    "rows_in": val.rows_in,
+                    "rows_out": val.rows_clean,
+                    "rows_quarantined": val.rows_quarantined,
+                }
+                manifest["rule_counts"] = val.rule_counts
+                manifest["trusted_row_share"] = val.trusted_share
+                manifest["reconciliation"]["clean_plus_quarantined"] = (
+                    val.rows_clean + val.rows_quarantined
+                )
+        finally:
+            con.close()
+        log.info("stages after validate are not implemented yet (phase 4+)")
         manifest["status"] = "success"
         code = EXIT_OK
     except PipelineError as exc:
@@ -145,6 +185,12 @@ def run(args: argparse.Namespace) -> int:
         code,
     )
     return code
+
+
+def counts_db_path(cfg: dict, tag: str) -> str:
+    from pipeline.config import resolve
+
+    return str(resolve(cfg, "warehouse_dir") / f"{tag}.duckdb")
 
 
 def show(args: argparse.Namespace) -> int:
