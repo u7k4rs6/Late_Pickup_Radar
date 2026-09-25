@@ -1,1 +1,59 @@
-%% Star-schema ERD: filled in phase 4.
+%% Late Pickup Radar: star schema `model` in DuckDB (built by pipeline/sql/06_model.sql)
+erDiagram
+    fact_trip ||--o{ fact_trip_event : "3 or 4 events"
+    dim_zone ||--o{ fact_trip : "pu_zone_id"
+    dim_zone ||--o{ fact_trip : "do_zone_id"
+    dim_company ||--o{ fact_trip : "company_id"
+    dim_base ||--o{ fact_trip : "base_id"
+    dim_hour ||--o{ fact_trip : "request_hour_key"
+
+    fact_trip {
+        bigint trip_key PK "raw file_row_number"
+        varchar company_id FK
+        varchar base_id FK
+        int pu_zone_id FK
+        int do_zone_id FK
+        timestamp request_ts
+        timestamp on_scene_ts
+        timestamp pickup_ts
+        timestamp dropoff_ts
+        timestamp request_hour_key FK
+        double wait_minutes
+        double dwell_minutes
+        double trip_minutes "from trip_time"
+        boolean is_late_8_10_15
+        boolean wav_request
+        boolean flag_r02_to_r14 "every FLAG rule"
+    }
+    fact_trip_event {
+        bigint trip_key FK
+        int event_order
+        varchar event_type "requested, on_scene, picked_up, dropped_off"
+        timestamp event_ts
+        varchar event_source "raw column name"
+    }
+    dim_zone {
+        int zone_id PK
+        varchar borough
+        varchar zone
+        varchar service_zone
+        boolean is_unknown "264, 265"
+    }
+    dim_company {
+        varchar company_id PK "HV0003"
+        varchar company_name "Uber"
+        varchar source "data_dictionary_2025-03-18"
+    }
+    dim_base {
+        varchar base_id PK
+        varchar base_name "NULL: not available"
+    }
+    dim_hour {
+        timestamp hour_key PK "local wall clock"
+        int dow
+        int hour_of_day
+        double precipitation_mm "from the row labelled H+1"
+        double temperature_c
+        boolean is_rainy
+        boolean weather_available
+    }

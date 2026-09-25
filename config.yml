@@ -43,10 +43,24 @@ completeness:
 kpi:
   late_minutes: 10                 # = observed p90 (10.02 min, 2026-07); fixed across months, see assumptions.md
   sensitivity_minutes: [8, 15]
+  # R14 (whole-minute requests) is promoted to a wait-metric exclusion only if its late rate is
+  # more than this multiple of the rest (agreed in review; assumptions.md F18).
+  r14_promotion_ratio: 2.0
 
 thresholds:
-  rain_mm_per_hour: 0.5            # PLACEHOLDER: is_rainy (PRD 6.2)
+  # is_rainy: precipitation in the request hour >= this (mm). 2026-07: 98 of 744 hours; the
+  # 0.1-0.4 mm hours are drizzle-level model noise (assumptions.md F20).
+  rain_mm_per_hour: 0.5
+  rain_sensitivity_mm_per_hour: 2.5  # "moderate rain" line for M4 robustness
   trust_floor: 0.95                # PLACEHOLDER: M5 hard-fail floor (PRD 7)
+
+incentives:
+  # Decision grain: pickup zone x day-of-week x hour-of-day, on the REQUEST timestamp (the
+  # rider's ask is when supply is needed). Ranked by excess late trips =
+  # (cell late rate - citywide late rate) x n, only for cells with n >= min_cell_trips.
+  min_cell_trips: 200              # justified in assumptions.md (binomial error at n = 200)
+  top_n: 20
+  console_top_n: 10
 
 download:
   # nyc.gov answers 403 to non-browser User-Agents (python-requests, curl, and a

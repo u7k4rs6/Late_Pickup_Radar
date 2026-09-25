@@ -56,10 +56,20 @@ def flag(rule_id: str) -> str:
     return f"flag_{rule_id.lower()}"
 
 
+def excluding_flags(rules: dict[str, Any], family: str) -> list[str]:
+    """flag_<id> columns whose rule excludes rows from a metric family (wait, dwell, zone...)."""
+    return [flag(r["id"]) for r in rules["rules"] if family in (r.get("excludes") or [])]
+
+
+def eligible(rules: dict[str, Any], family: str) -> db.Fragment:
+    """Condition for a clean row to enter metrics of `family`."""
+    ex = excluding_flags(rules, family)
+    return db.Fragment(" AND ".join(f"NOT {c}" for c in ex) if ex else "TRUE")
+
+
 def wait_ok(rules: dict[str, Any]) -> db.Fragment:
     """Condition for a clean row to enter wait-based metrics (KPI, p90 wait)."""
-    ex = [flag(r["id"]) for r in rules["rules"] if "wait" in (r.get("excludes") or [])]
-    return db.Fragment(" AND ".join(f"NOT {c}" for c in ex) if ex else "TRUE")
+    return eligible(rules, "wait")
 
 
 def render_validate_sql(rules: dict[str, Any], month_bounds: tuple[str, str]) -> str:
@@ -98,6 +108,7 @@ class ValidationResult:
     rows_clean: int
     rows_quarantined: int
     trusted_share: float
+    trust: dict[str, Any]
     rule_counts: list[dict[str, Any]]
     report_path: Path
 
@@ -149,7 +160,7 @@ def _counts(con: duckdb.DuckDBPyConnection, rules: dict[str, Any], rows_in: int)
     return out
 
 
-def _console_table(counts: list[dict], trusted: float, floor: float) -> None:
+def _console_table(counts: list[dict], trust: dict[str, Any], floor: float) -> None:
     t = Table(show_edge=False, header_style="bold")
     for col, justify in (
         ("rule_id", "left"),
@@ -169,10 +180,12 @@ def _console_table(counts: list[dict], trusted: float, floor: float) -> None:
             c["name"],
         )
     logging_setup.console.print(t)
-    ok = trusted >= floor
-    mark = "[green]✔[/green]" if ok else "[red]✘[/red]"
+    trusted = trust["trusted_row_share"]
+    mark = "[green]✔[/green]" if trusted >= floor else "[red]✘[/red]"
     logging_setup.console.print(
-        f"trusted-row share [bold]{trusted:.1%}[/bold] (floor {floor:.0%}) {mark}"
+        f"trusted-row share   [bold]{trusted:.3%}[/bold] (floor {floor:.0%}) {mark}\n"
+        f"wait-eligible share [bold]{trust['wait_eligible_share']:.3%}[/bold] (rows in the KPI)\n"
+        f"dwell coverage      [bold]{trust['dwell_coverage']:.3%}[/bold] (on_scene < pickup)"
     )
 
 
@@ -202,7 +215,8 @@ def validate(
         f"{rows_q:,}",
         f"{rows_in:,}",
     )
-    trusted = rows_clean / rows_in if rows_in else 0.0
+    trust = trust_shares(con, rules, rows_in, rows_clean)
+    trusted = trust["trusted_row_share"]
     floor = cfg["thresholds"]["trust_floor"]
     counts = _counts(con, rules, rows_in)
     for c in counts:
@@ -215,9 +229,16 @@ def validate(
             c["name"],
             extra=FILE_ONLY,
         )
-    _console_table(counts, trusted, floor)
+    _console_table(counts, trust, floor)
+    log.info(
+        "trusted-row share %.3f%%; wait-eligible share %.3f%%; dwell coverage %.3f%%",
+        100 * trusted,
+        100 * trust["wait_eligible_share"],
+        100 * trust["dwell_coverage"],
+        extra=FILE_ONLY,
+    )
 
-    report = _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trusted)
+    report = _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trust)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "validation_report.md"
     path.write_text(report)
@@ -227,10 +248,28 @@ def validate(
 
     if trusted < floor:
         raise ValidationFailed(
-            f"trusted-row share {trusted:.2%} is below the floor {floor:.0%}: "
+            f"trusted-row share {trusted:.3%} is below the floor {floor:.0%}: "
             "metrics will not be published"
         )
-    return ValidationResult(rows_in, rows_clean, rows_q, trusted, counts, path)
+    return ValidationResult(rows_in, rows_clean, rows_q, trusted, trust, counts, path)
+
+
+def trust_shares(con, rules: dict[str, Any], rows_in: int, rows_clean: int) -> dict[str, Any]:
+    """M5 as three lines: how much data stands behind each number (all over rows in)."""
+    wait_n = con.execute(f"SELECT count(*) FROM clean.trips WHERE {wait_ok(rules)}").fetchone()[0]
+    dwell_n = con.execute(
+        f"SELECT count(*) FROM clean.trips WHERE {eligible(rules, 'dwell')}"
+    ).fetchone()[0]
+    share = (lambda k: k / rows_in) if rows_in else (lambda k: 0.0)
+    return {
+        "rows_in": rows_in,
+        "trusted_rows": rows_clean,
+        "trusted_row_share": share(rows_clean),
+        "wait_eligible_rows": wait_n,
+        "wait_eligible_share": share(wait_n),
+        "dwell_rows": dwell_n,
+        "dwell_coverage": share(dwell_n),
+    }
 
 
 def _kpi_queries(cfg: dict[str, Any], rules: dict[str, Any]) -> dict[str, str]:
@@ -244,12 +283,29 @@ def _kpi_queries(cfg: dict[str, Any], rules: dict[str, Any]) -> dict[str, str]:
     )
 
 
-def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trusted) -> str:
+def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trust) -> str:
     import pandas as pd
 
     q = _kpi_queries(cfg, rules)
     variants = con.execute(q["kpi_variants"]).df()
     segments = con.execute(q["kpi_by_segment"]).df()
+    r14 = con.execute(q["r14_check"]).df()
+    r14_row = r14.to_dict("records")[0] if len(r14) else {}
+    ratio = r14_row.get("ratio")
+    bar = cfg["kpi"]["r14_promotion_ratio"]
+    if ratio is None or ratio != ratio:  # NaN when there are no rows
+        r14_text = "No wait-eligible rows: the R14 check cannot be computed."
+    else:
+        verdict = (
+            "above the promotion bar: R14 should be excluded from wait metrics like R12"
+            if ratio > bar
+            else "below the promotion bar, so R14 stays a sensitivity line"
+        )
+        r14_text = (
+            f"Whole-minute rows are late {ratio:.2f}x as often as the rest (bar: {bar}x), "
+            f"{verdict}. Excess over the 1-in-60 chance level: "
+            f"{int(r14_row['excess_over_chance']):,} rows."
+        )
     main = cfg["kpi"]["late_minutes"]
     col = f"late_rate_{main}_pct"
     v = {r["variant"][0]: r for r in variants.to_dict("records")}
@@ -276,7 +332,7 @@ def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trusted
         f"would give **{rate('c')}**. Also dropping every whole-minute request (R14: most "
         f"remaining reservations plus a random 1/60 of on-demand trips) gives **{rate('d')}**; "
         f"the gap between that and the headline bounds the effect of reservations R12 does not "
-        f"catch. Trusted-row share is {trusted:.2%} against a floor of {floor:.0%}."
+        f"catch."
     )
     count_df = pd.DataFrame(counts)
     return "\n".join(
@@ -303,7 +359,32 @@ def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trusted
             f"Reconciliation: clean {rows_clean:,} + quarantined {rows_q:,} = "
             f"{rows_clean + rows_q:,} == rows in {rows_in:,} ✔",
             "",
-            f"Trusted-row share (M5): **{trusted:.2%}** (floor {floor:.0%}).",
+            "## How much data stands behind each number (M5)",
+            "",
+            table(
+                pd.DataFrame(
+                    [
+                        {
+                            "line": "trusted-row share (not quarantined)",
+                            "rows": trust["trusted_rows"],
+                            "share_of_rows_in_pct": round(100 * trust["trusted_row_share"], 4),
+                            "note": f"floor {floor:.0%}; hard fail below it",
+                        },
+                        {
+                            "line": "wait-eligible share (rows in the KPI and p90 wait)",
+                            "rows": trust["wait_eligible_rows"],
+                            "share_of_rows_in_pct": round(100 * trust["wait_eligible_share"], 4),
+                            "note": "clean and not excluded from wait metrics",
+                        },
+                        {
+                            "line": "dwell coverage (on_scene < pickup)",
+                            "rows": trust["dwell_rows"],
+                            "share_of_rows_in_pct": round(100 * trust["dwell_coverage"], 4),
+                            "note": "clean and not excluded from dwell metrics",
+                        },
+                    ]
+                )
+            ),
             "",
             "## Per rule",
             "",
@@ -314,6 +395,12 @@ def _report(con, month, cfg, rules, counts, rows_in, rows_clean, rows_q, trusted
             kpi_text,
             "",
             table(variants),
+            "",
+            "### Whole-minute requests (R14): promote or keep as sensitivity?",
+            "",
+            r14_text,
+            "",
+            table(r14),
             "",
             "### By company and WAV request",
             "",

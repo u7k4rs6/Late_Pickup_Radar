@@ -1,1 +1,390 @@
-"""report stage: implemented in a later phase (see docs/PRD.md Section 10)."""
+"""Stage 7: evidence.md (evidence table, top-N incentive cells, KUAL), charts, console summary.
+
+Every number here is read from metrics.csv / incentive_cells.csv / the run context; the report
+adds no computation of its own beyond formatting.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import duckdb
+import pandas as pd
+from rich.table import Table
+
+from pipeline import charts, db, logging_setup
+from pipeline.logging_setup import log
+from pipeline.markdown import table
+from pipeline.metrics import MetricsResult
+
+DOW = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
+HEATMAP_BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]  # EWR: < 200/hour
+RAIN_SCOPES = ["all", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+COMPANY = {"HV0003": "Uber", "HV0005": "Lyft"}
+
+
+@dataclass
+class ReportResult:
+    evidence_path: Path
+    chart_paths: list[Path]
+
+
+class Lookup:
+    """metrics.csv rows by (metric, grain, dimensions)."""
+
+    def __init__(self, metrics: pd.DataFrame):
+        self.rows = {(r.metric, r.grain, r.dimensions): r for r in metrics.itertuples(index=False)}
+
+    def get(self, metric: str, grain: str = "month", dims: str = ""):
+        return self.rows.get((metric, grain, dims))
+
+    def value(self, metric: str, grain: str = "month", dims: str = "") -> float | None:
+        r = self.get(metric, grain, dims)
+        return None if r is None or pd.isna(r.value) else float(r.value)
+
+
+def pct(v: float | None, digits: int = 2) -> str:
+    return "UNAVAILABLE" if v is None else f"{100 * v:.{digits}f}%"
+
+
+def pts(v: float | None) -> str:
+    return "UNAVAILABLE" if v is None else f"{100 * v:+.2f} pts"
+
+
+def _dims(d: str) -> dict[str, str]:
+    return dict(p.split("=", 1) for p in d.split("|") if p)
+
+
+def evidence_rows(m: Lookup, cfg: dict[str, Any]) -> list[dict[str, str]]:
+    main = cfg["kpi"]["late_minutes"]
+    low, high = sorted(cfg["kpi"]["sensitivity_minutes"])
+    rain, rain_hi = (
+        cfg["thresholds"]["rain_mm_per_hour"],
+        cfg["thresholds"]["rain_sensitivity_mm_per_hour"],
+    )
+    n = lambda metric, grain="month", dims="": (  # noqa: E731
+        f"{int(r.n):,}" if (r := m.get(metric, grain, dims)) is not None else "0"
+    )
+    wait_share = pct(m.value("M5_wait_eligible_share"), 3)
+    rows = [
+        {
+            "#": "M1 (KPI)",
+            "metric": f"Late-pickup rate, wait > {main} min",
+            "value": pct(m.value(f"M1_late_rate_{main}")),
+            "n": n(f"M1_late_rate_{main}"),
+            "data behind it": f"wait-eligible rows: {wait_share} of rows in",
+        },
+        {
+            "#": "M1",
+            "metric": f"Late-pickup rate, wait > {low} min",
+            "value": pct(m.value(f"M1_late_rate_{low}")),
+            "n": n(f"M1_late_rate_{low}"),
+            "data behind it": "threshold sensitivity",
+        },
+        {
+            "#": "M1",
+            "metric": f"Late-pickup rate, wait > {high} min",
+            "value": pct(m.value(f"M1_late_rate_{high}")),
+            "n": n(f"M1_late_rate_{high}"),
+            "data behind it": "threshold sensitivity",
+        },
+    ]
+    for variant, label in (
+        ("variant=pre-arranged kept as measured", "if pre-arranged rides (R12) were counted"),
+        ("variant=whole-minute requests dropped", "if whole-minute requests (R14) were dropped"),
+    ):
+        rows.append(
+            {
+                "#": "M1",
+                "metric": f"Late rate > {main} min, {label}",
+                "value": pct(m.value(f"M1_late_rate_{main}", "month", variant)),
+                "n": n(f"M1_late_rate_{main}", "month", variant),
+                "data behind it": "sensitivity of the exclusion",
+            }
+        )
+    for company in ("HV0003", "HV0005"):
+        for wav in ("false", "true"):
+            dims = f"company={company}|wav_request={wav}"
+            cov = m.value("M5_wait_coverage", "company x wav_request", dims)
+            rows.append(
+                {
+                    "#": "M1",
+                    "metric": f"Late rate > {main} min, {COMPANY[company]} "
+                    f"{'WAV' if wav == 'true' else 'non-WAV'}",
+                    "value": pct(m.value(f"M1_late_rate_{main}", "company x wav_request", dims)),
+                    "n": n(f"M1_late_rate_{main}", "company x wav_request", dims),
+                    "data behind it": f"wait coverage {pct(cov)} of this segment's clean rows",
+                }
+            )
+    rows.append(
+        {
+            "#": "M2",
+            "metric": "p90 wait (minutes)",
+            "value": _num(m.value("M2_p90_wait_minutes")),
+            "n": n("M2_p90_wait_minutes"),
+            "data behind it": "same rows as the KPI",
+        }
+    )
+    for company in ("HV0003", "HV0005"):
+        dims = f"company={company}"
+        rows.append(
+            {
+                "#": "M3",
+                "metric": f"Median on-scene dwell (minutes), {COMPANY[company]}",
+                "value": _num(m.value("M3_median_dwell_minutes", "company", dims)),
+                "n": n("M3_median_dwell_minutes", "company", dims),
+                "data behind it": f"dwell coverage {pct(m.value('M3_dwell_coverage', 'company', dims))}"
+                " (on_scene < pickup)",
+            }
+        )
+    for thr in (rain, rain_hi):
+        dims = f"threshold_mm={thr}"
+        wet = m.value("M4_wet_hours", "month", dims)
+        wet_txt = (
+            "UNAVAILABLE"
+            if wet is None
+            else f"{int(wet)} of {n('M4_wet_hours', 'month', dims)} hours"
+        )
+        rows.append(
+            {
+                "#": "M4",
+                "metric": f"Rain minus dry late rate, rain >= {thr} mm/h (raw)",
+                "value": pts(m.value("M4_rain_minus_dry_late_rate", "month", dims)),
+                "n": n("M4_rain_minus_dry_late_rate", "month", dims),
+                "data behind it": f"wet hours: {wet_txt}",
+            }
+        )
+        rows.append(
+            {
+                "#": "M4",
+                "metric": f"Rain minus dry, rain >= {thr} mm/h, within hour of day",
+                "value": pts(m.value("M4_rain_minus_dry_late_rate_hour_adjusted", "month", dims)),
+                "n": n("M4_rain_minus_dry_late_rate_hour_adjusted", "month", dims),
+                "data behind it": "n = trips in rainy hours; controls for time of day",
+            }
+        )
+    for metric, label in (
+        ("M5_trusted_row_share", "Trusted-row share (not quarantined)"),
+        ("M5_wait_eligible_share", "Wait-eligible share (rows in the KPI)"),
+        ("M5_dwell_coverage", "Dwell coverage (on_scene < pickup)"),
+    ):
+        rows.append(
+            {
+                "#": "M5",
+                "metric": label,
+                "value": pct(m.value(metric), 3),
+                "n": n(metric),
+                "data behind it": "share of rows in",
+            }
+        )
+    return rows
+
+
+def _num(v: float | None) -> str:
+    return "UNAVAILABLE" if v is None else f"{v:.2f}"
+
+
+def top_cells_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
+    top = cells.head(k)
+    return pd.DataFrame(
+        {
+            "rank": top["rank"],
+            "borough": top["borough"],
+            "zone": top["zone"],
+            "day-hour (request)": [
+                f"{DOW[d]} {h:02d}:00" for d, h in zip(top["dow"], top["hour"], strict=True)
+            ],
+            "late rate": [f"{100 * v:.1f}%" for v in top["late_rate"]],
+            "vs city": [f"{100 * v:+.1f} pts" for v in top["late_rate_excess"]],
+            "n": top["n"],
+            "excess late trips": [f"{v:.0f}" for v in top["excess_late_trips"]],
+            "p90 wait (min)": [f"{v:.1f}" for v in top["p90_wait_minutes"]],
+        }
+    )
+
+
+def make_charts(con, m: MetricsResult, cfg: dict[str, Any], rules, out_dir: Path) -> list[Path]:
+    kpi = cfg["kpi"]
+    main = kpi["late_minutes"]
+    cdir = out_dir / "charts"
+    cap = next(r for r in rules["rules"] if r["id"] == "R03")["params"]["max_wait_minutes"]
+    q = db.named_queries("09_report.sql")
+    paths = [
+        charts.wait_histogram(
+            con.execute(q["wait_histogram"]).df(),
+            cdir / "wait_distribution.png",
+            [main, *kpi["sensitivity_minutes"]],
+            "Wait for the trips in the KPI (pre-arranged rides excluded), log scale",
+            cap=cap,
+        )
+    ]
+    heat = m.metrics[
+        (m.metrics["metric"] == f"M1_late_rate_{main}")
+        & (m.metrics["grain"] == "borough x hour_of_day")
+    ].copy()
+    heat["borough"] = [_dims(d)["borough"] for d in heat["dimensions"]]
+    heat["hour"] = [int(_dims(d)["hour"]) for d in heat["dimensions"]]
+    paths.append(
+        charts.late_rate_heatmap(
+            heat,
+            cdir / "late_rate_heatmap.png",
+            f"Late-pickup rate (wait > {main} min) by pickup borough and request hour",
+            cfg["incentives"]["min_cell_trips"],
+            HEATMAP_BOROUGHS,
+        )
+    )
+    if m.weather_available:
+        lk = Lookup(m.metrics)
+        thr = cfg["thresholds"]["rain_mm_per_hour"]
+        bars = []
+        for scope in RAIN_SCOPES:
+            grain = "month" if scope == "all" else "borough"
+            dims = f"threshold_mm={thr}" + ("" if scope == "all" else f"|borough={scope}")
+            bars.append(
+                {
+                    "scope": "citywide" if scope == "all" else scope,
+                    "rainy": lk.value("M4_late_rate_rainy", grain, dims),
+                    "dry": lk.value("M4_late_rate_dry", grain, dims),
+                }
+            )
+        wet = lk.value("M4_wet_hours", "month", f"threshold_mm={thr}")
+        paths.append(
+            charts.rain_vs_dry(
+                pd.DataFrame(bars),
+                cdir / "rain_vs_dry.png",
+                f"Late-pickup rate (wait > {main} min) in rainy vs dry request hours",
+                f"rainy = precipitation >= {thr} mm in the request hour "
+                f"({int(wet) if wet is not None else 0} wet hours); "
+                "single weather point (Central Park); raw rates, not adjusted for time of day",
+            )
+        )
+    return paths
+
+
+def kual(ctx: dict[str, Any], m: Lookup, cfg: dict[str, Any]) -> list[str]:
+    c = ctx["completeness"]["trips"]
+    trust = ctx["trust"]
+    main = cfg["kpi"]["late_minutes"]
+    lyft_wav = m.value(
+        "M5_wait_coverage", "company x wav_request", "company=HV0005|wav_request=true"
+    )
+    uber_dwell = m.value("M3_dwell_coverage", "company", "company=HV0003")
+    return [
+        "## Known / Unknown / Assumption / Limitation",
+        "",
+        "**Known**",
+        f"- The TLC file is complete for the month: {c['footer_rows']:,} rows; "
+        f"{c['days_with_rows']}/{c['expected_days']} days and "
+        f"{c['hours_with_rows']}/{c['expected_hours']} hours have pickups; bytes match "
+        "Content-Length; TLC's aggregate report agrees within the sanity band.",
+        f"- {pct(trust['trusted_row_share'], 3)} of rows pass every REJECT rule; "
+        f"{pct(trust['wait_eligible_share'], 3)} enter the KPI.",
+        "",
+        "**Unknown**",
+        "- Cancellations and unfulfilled requests are not in the data, so the KPI is conditional on "
+        "a trip happening. True rider wait including cancellations cannot be known from this source.",
+        "- Which trips were booked in advance: the file has no scheduling field.",
+        "",
+        "**Assumption**",
+        f"- Late means wait > {main} min (observed p90), fixed across months; reported at "
+        f"{' and '.join(map(str, sorted(cfg['kpi']['sensitivity_minutes'])))} min too.",
+        "- Wait is measured from request, not on_scene. Where on_scene is before request (R12), "
+        "the request is treated as a booking time, not the rider's ask, and the row leaves the KPI.",
+        "- One weather point (Central Park; its grid cell lies over New Jersey) stands for the "
+        "whole city.",
+        "- on_scene is trusted where it is before pickup; where it equals pickup it was not captured.",
+        "",
+        "**Limitation**",
+        "- One month (2026-07), which includes the July 4 holiday weekend; wet hours cluster on it.",
+        "- Weather is model reanalysis, not a station.",
+        f"- Dwell coverage differs by company (Uber {pct(uber_dwell)}), so dwell comparisons "
+        "rest on different shares of trips.",
+        f"- Lyft WAV: only {pct(lyft_wav)} of clean trips can enter wait metrics, so the Lyft WAV "
+        "late rate rests on a minority of that segment's trips.",
+        "",
+    ]
+
+
+def console_summary(rows: list[dict], cells: pd.DataFrame, k: int) -> None:
+    con = logging_setup.console
+    t = Table(title="Evidence", show_edge=False, header_style="bold")
+    for c in ("#", "metric", "value", "n"):
+        t.add_column(c, justify="right" if c in ("value", "n") else "left")
+    for r in rows:
+        t.add_row(r["#"], r["metric"], r["value"], r["n"])
+    con.print(t)
+    top = Table(title=f"Top {k} incentive cells", show_edge=False, header_style="bold")
+    for c in ("#", "borough · zone", "dow-hour", "late rate", "n", "excess"):
+        top.add_column(c, justify="right" if c in ("late rate", "n", "excess", "#") else "left")
+    for r in cells.head(k).itertuples(index=False):
+        top.add_row(
+            str(r.rank),
+            f"{r.borough} · {r.zone}",
+            f"{DOW[r.dow]} {r.hour:02d}",
+            f"{100 * r.late_rate:.1f}%",
+            f"{r.n:,}",
+            f"{r.excess_late_trips:.0f}",
+        )
+    con.print(top)
+
+
+def write_report(
+    con: duckdb.DuckDBPyConnection,
+    month: str,
+    cfg: dict[str, Any],
+    rules: dict[str, Any],
+    m: MetricsResult,
+    ctx: dict[str, Any],
+    out_dir: Path,
+) -> ReportResult:
+    lk = Lookup(m.metrics)
+    rows = evidence_rows(lk, cfg)
+    inc = cfg["incentives"]
+    chart_paths = make_charts(con, m, cfg, rules, out_dir)
+    chart_md = [f"![{p.stem}](charts/{p.name})" for p in chart_paths]
+    if not m.weather_available:
+        chart_md.append("_Rain vs dry chart not drawn: weather UNAVAILABLE._")
+    main = cfg["kpi"]["late_minutes"]
+    parts = [
+        f"# Evidence: {month}",
+        "",
+        f"Scope: {ctx['scope']}. Pipeline commit `{ctx['git_sha']}`. Generated by "
+        "`pipeline/report.py` from `metrics.csv` and `incentive_cells.csv`.",
+        "",
+        "## Evidence table",
+        "",
+        table(pd.DataFrame(rows)),
+        "",
+        f"## Top {inc['top_n']} zone x hour-of-week cells for driver incentives",
+        "",
+        f"Ranked by **excess late trips** = (cell late rate - citywide late rate "
+        f"{pct(m.kpi)}) x n: how many more trips were late in that cell than if it matched the "
+        f"city. Cells need n >= {inc['min_cell_trips']} trips in the month; "
+        f"{len(m.cells):,} cells qualify. Day and hour are of the request. Pickup zones 264/265 and "
+        "pre-arranged rides are excluded.",
+        "",
+        table(top_cells_table(m.cells, inc["top_n"])),
+        "",
+        "## Charts",
+        "",
+        *[line for md in chart_md for line in (md, "")],
+        *kual(ctx, lk, cfg),
+        "## Definitions",
+        "",
+        f"- M1 late-pickup rate: share of wait-eligible clean trips with wait > {main} min "
+        "(`avg(is_late_N)` over `model.fact_trip WHERE NOT flag_r12`).",
+        "- M2: `quantile_cont(wait_minutes, 0.9)` over the same rows.",
+        "- M3: `median(dwell_minutes)` where `NOT flag_r09 AND NOT flag_r13` (arrival captured).",
+        "- M4: late rate in rainy request hours minus dry ones; raw, and within hour of day.",
+        "- M5: trusted-row share, wait-eligible share and dwell coverage, all over rows in.",
+        "- SQL: `pipeline/sql/07_metrics.sql`, `pipeline/sql/08_incentive_cells.sql`.",
+        "",
+    ]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "evidence.md"
+    path.write_text("\n".join(parts))
+    console_summary(rows, m.cells, inc["console_top_n"])
+    log.info("evidence written: %s (+ %d charts)", path.name, len(chart_paths))
+    return ReportResult(path, chart_paths)

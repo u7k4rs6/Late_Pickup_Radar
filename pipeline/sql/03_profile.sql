@@ -174,7 +174,7 @@ SELECT
     round(median(epoch(dropoff_datetime - pickup_datetime)), 0) AS median_timestamp_seconds,
     round(median(trip_time), 0)                               AS median_trip_time_seconds
 FROM stage.trips
-WHERE trip_minutes > 0 AND trip_miles / (trip_minutes / 60.0) > 65;
+WHERE timestamp_trip_minutes > 0 AND trip_miles / (timestamp_trip_minutes / 60.0) > 65;
 
 -- name: duration_agreement
 SELECT

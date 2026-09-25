@@ -16,6 +16,10 @@ Every place where real data contradicted the PRD is logged under "PRD deviations
 | R06 `max_speed_mph` | 65 | validation_rules.yml | Counts fall ~5x per 5-mph bin from 50 to 65 mph (6,441 / 1,219 / 190), then scatter (42 rows above); p99.99 = 54 mph |
 | R07 `max_gap_seconds` | 120 | validation_rules.yml | PRD value; median gap 0 s, p99 absolute gap 161 s, so 120 s isolates the disagreeing 1.55% |
 | R10 `min_trip_seconds` | 60 | validation_rules.yml | PRD value; 1,733 of 1,987 zero-mile trips last longer than a minute |
+| `thresholds.rain_mm_per_hour` | 0.5 | config.yml | F20: separates the 74 drizzle-level hours (0.1-0.4 mm) from rain; 98 wet hours in 2026-07 |
+| `thresholds.rain_sensitivity_mm_per_hour` | 2.5 | config.yml | F20: "moderate rain"; 32 hours in 2026-07; robustness line for M4 |
+| `incentives.min_cell_trips` | 200 | config.yml | F22: binomial SE 2.1 pts at a 10% rate; keeps 93.7% of zone-known wait-eligible trips |
+| `kpi.r14_promotion_ratio` | 2.0 | config.yml | Agreed in review; observed ratio 1.13x (F18) |
 | R12 / R13 / R14 | no threshold | validation_rules.yml | Strict inequalities / equality on the raw timestamps; F11, F14, F17 |
 ## PRD deviations
 
@@ -104,6 +108,46 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
 - **F17 Whole-minute requests as a sensitivity (R14).** On-demand requests hit second 0 one time
   in 60, so dropping every whole-minute request removes reservations while dropping on-demand
   trips at random. Used for a KPI sensitivity line, not for the headline.
+
+### Findings from phase 4 (model and metrics, 2026-07)
+
+- **F18 R14 stays a sensitivity line (checked, not assumed).** Of 655,426 whole-minute requests,
+  ~300,000 are already R12 and outside the KPI. Among the 20,554,131 wait-eligible rows: 355,098
+  whole-minute requests vs 342,569 expected by chance (1/60), an excess of ~12,500 likely
+  reservations. Their late rate is 11.30% vs 9.99% for the rest: **1.13x**, below the 2x
+  promotion bar agreed in review (`config.yml kpi.r14_promotion_ratio`). Dropping every R14 row
+  moves the KPI from 10.02% to 9.99%.
+- **F19 R02 becomes a FLAG.** Its 2 rows are timestamp defects, not non-trips: one has trip_time
+  163 s, 0.48 mi and a fare; the other trip_time 1 s, 0 mi and a fare. Their waits are valid. R02
+  now excludes rows only from fields derived from the dropoff timestamp. PRD R02 amended.
+- **F15 follow-up: trip_minutes comes from trip_time.** PRD R07's "we trust timestamps" is
+  amended to the opposite; `timestamp_trip_minutes` is kept beside it for R02/R07.
+- **F20 Weather alignment and the rain threshold.** Open-Meteo documents precipitation as the
+  "sum of the preceding hour", so hour H takes precipitation from the row labelled H+1; temperature
+  is instantaneous and is taken at H. July 2026 across its 744 local hours: 572 fully dry, 172 with
+  any precipitation, 98 at >= 0.5 mm, 32 at >= 2.5 mm. The 74 hours at 0.1-0.4 mm are drizzle-level
+  model output (values are stored in 0.1 mm steps), so **is_rainy = >= 0.5 mm**, with 2.5 mm
+  ("moderate rain") as a robustness line. Wet hours cluster: 35 of the 98 fall on Jul 5-6, the
+  holiday weekend, so M4 also reports a within-hour-of-day difference. Weather joins on the
+  **request** hour; 2,144 wait-eligible trips were requested before Jul 1 (for Jul 1 pickups) and
+  have no weather hour, so they are outside M4 only.
+- **F21 M5 is three lines, all over rows in.** Trusted-row share 99.998% (376 rows quarantined:
+  quoting 100.00% would hide them); wait-eligible share 98.245%; dwell coverage 95.156%.
+  Per segment, wait coverage is reported beside the rate: Lyft WAV is 41.98%.
+- **F22 Cell floor n >= 200 (`incentives.min_cell_trips`).** At the city late rate (~10%), a
+  200-trip cell has a binomial standard error of 2.1 points, so a 95% interval is about +/-4.2
+  points: a cell must be roughly 1.4x the city rate before it is distinguishable from it. Lower
+  floors admit small cells whose rate is mostly noise. 28,360 cells qualify, holding
+  19,257,926 of the 20,552,912 wait-eligible trips with a known pickup zone (93.7%).
+- **F23 Cells are keyed on the request timestamp.** Day-of-week and hour come from the rider's ask,
+  which is when supply is needed; the pickup can fall in the next hour.
+- **F24 The airports dominate the ranking (open decision).** All 20 of the top 20 cells are
+  LaGuardia or JFK, 21:00-00:00. The delay there is on the supply side: at LaGuardia late at night
+  the median request-to-arrival is 9.2 min (3.9 min in the daytime) while dwell stays under a minute
+  (0.87). The first non-airport cell ranks 45th (Williamsburg, Saturday 23:00), then a
+  Bushwick / East Williamsburg / Bronx late-night cluster. Airport pickups run through
+  Port-Authority staging lots, so airport incentives may be a different lever. Whether to rank
+  airports separately is a business decision; it is not made in the code.
 
 ### Notes for the demo judgement call (to finalise after review)
 

@@ -480,10 +480,11 @@ def load_raw(result: IngestResult, warehouse_dir: Path, db_name: str) -> dict[st
         )
         if result.weather_path is not None:
             db.run_file(con, "01b_load_raw_weather.sql", weather_path=result.weather_path)
+        else:
+            db.run_file(con, "01c_empty_weather.sql")
         counts = {
             t: con.execute(f"SELECT count(*) FROM raw.{t}").fetchone()[0]
             for t in ("trips", "zones", "weather")
-            if result.weather_path is not None or t != "weather"
         }
     finally:
         con.close()

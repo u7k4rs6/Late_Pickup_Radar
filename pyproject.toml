@@ -33,5 +33,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# report.py is mostly the prose of evidence.md; wrapping those sentences hurts readability.
+"pipeline/report.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

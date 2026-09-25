@@ -73,8 +73,11 @@ def run(args: argparse.Namespace) -> int:
     from pipeline import ingest as ing
     from pipeline.config import ROOT, load_config, resolve
     from pipeline.logging_setup import log, rows_line, setup_logging, stage
-    from pipeline.manifest import git_sha, repo_relative, utc_now, write_json_atomic
+    from pipeline.manifest import git_sha, repo_relative, sha256_file, utc_now, write_json_atomic
+    from pipeline.metrics import compute_metrics
+    from pipeline.model import build_model
     from pipeline.profile import profile as profile_stage
+    from pipeline.report import write_report
     from pipeline.validate import load_rules, validate
 
     cfg = load_config()
@@ -159,9 +162,61 @@ def run(args: argparse.Namespace) -> int:
                 manifest["reconciliation"]["clean_plus_quarantined"] = (
                     val.rows_clean + val.rows_quarantined
                 )
+                manifest["trust"] = val.trust
+
+            current = "model"
+            with stage("model"):
+                mod = build_model(con, args.month, cfg, rules)
+                rows_line("model", mod.rows_in, mod.fact_trips)
+                manifest["stages"]["model"] = {
+                    "rows_in": mod.rows_in,
+                    "rows_out": mod.fact_trips,
+                    "fact_trip_event_rows": mod.fact_events,
+                    "dim_hour_rows": mod.hours,
+                    "hours_with_weather": mod.hours_with_weather,
+                    "wet_hours": mod.wet_hours,
+                }
+
+            current = "metrics"
+            with stage("metrics"):
+                met = compute_metrics(con, cfg, out_dir)
+                rows_line("metrics", mod.fact_trips, len(met.metrics))
+                manifest["stages"]["metrics"] = {
+                    "rows_in": mod.fact_trips,
+                    "rows_out": len(met.metrics),
+                    "eligible_cells": len(met.cells),
+                    "metrics_csv_sha256": sha256_file(met.metrics_path),
+                }
+                manifest["kpi"] = {
+                    "late_rate": met.kpi,
+                    "late_minutes": cfg["kpi"]["late_minutes"],
+                    "weather_available": met.weather_available,
+                }
+
+            current = "report"
+            with stage("report"):
+                ctx = {
+                    "scope": (
+                        f"deterministic sample (--sample {args.sample})"
+                        if args.sample is not None
+                        else f"sample file {repo_relative(sample_file)}"
+                        if sample_file
+                        else "full month"
+                    ),
+                    "git_sha": manifest["git_sha"],
+                    "completeness": result.completeness,
+                    "trust": val.trust,
+                }
+                rep = write_report(con, args.month, cfg, rules, met, ctx, out_dir)
+                rows_line("report", len(met.metrics), len(met.metrics))
+                manifest["stages"]["report"] = {
+                    "rows_in": len(met.metrics),
+                    "rows_out": len(met.metrics),
+                    "evidence": repo_relative(rep.evidence_path),
+                    "charts": [repo_relative(p) for p in rep.chart_paths],
+                }
         finally:
             con.close()
-        log.info("stages after validate are not implemented yet (phase 4+)")
         manifest["status"] = "success"
         code = EXIT_OK
     except PipelineError as exc:

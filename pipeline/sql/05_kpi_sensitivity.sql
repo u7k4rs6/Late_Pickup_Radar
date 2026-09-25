@@ -40,3 +40,17 @@ SELECT
 FROM clean.trips
 GROUP BY ALL
 ORDER BY company, wav_request;
+
+-- name: r14_check
+-- Are whole-minute requests (R14) a hidden block of reservations inside the KPI?
+-- Promotion bar (agreed in review): R14 rows > 2x the late rate of the rest.
+SELECT
+    count(*) FILTER (WHERE flag_r14)                                         AS whole_minute_rows,
+    round(count(*) / 60.0)                                                   AS expected_by_chance,
+    count(*) FILTER (WHERE flag_r14) - round(count(*) / 60.0)                AS excess_over_chance,
+    round(100 * avg((wait_minutes > {late_main})::int) FILTER (WHERE flag_r14), 3)     AS late_rate_r14_pct,
+    round(100 * avg((wait_minutes > {late_main})::int) FILTER (WHERE NOT flag_r14), 3) AS late_rate_rest_pct,
+    round(avg((wait_minutes > {late_main})::int) FILTER (WHERE flag_r14)
+        / avg((wait_minutes > {late_main})::int) FILTER (WHERE NOT flag_r14), 2)       AS ratio
+FROM clean.trips
+WHERE {wait_ok};

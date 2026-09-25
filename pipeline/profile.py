@@ -11,20 +11,17 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-import matplotlib
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-
-from pipeline import db  # noqa: E402
-from pipeline.logging_setup import log  # noqa: E402
-from pipeline.markdown import table  # noqa: E402
+from pipeline import charts, db
+from pipeline.logging_setup import log
+from pipeline.markdown import table
 
 DERIVED = (
     "trip_id",
     "wait_minutes",
     "dwell_minutes",
     "trip_minutes",
+    "timestamp_trip_minutes",
     "duration_gap_seconds",
     "speed_mph",
     "dup_rank",
@@ -52,14 +49,6 @@ SECTIONS = (
     ("duplicates", "Duplicates: exact row and business key"),
     ("other_counts", "Zero miles, negative pay/fare, unknown zones, out-of-period rows"),
 )
-
-# Chart style is fixed so screenshots match between takes (PRD 15.4).
-CHART_SIZE = (9, 4.5)
-CHART_DPI = 120
-SERIES_BLUE = "#2a78d6"
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK_MUTED = "#52514e"
 
 
 @dataclass
@@ -127,54 +116,15 @@ def wait_chart(
     cfg: dict[str, Any],
     rules: dict[str, Any],
 ) -> Path:
-    hist = con.execute(queries["wait_log_histogram"]).df()
-    counts = dict(zip(hist["bin_k"].astype(int), hist["n"].astype(int), strict=True))
-    ks = range(min(counts), max(counts) + 1)  # every bin, empty ones as 0 (not stretched)
-    edges = [10 ** (k / 20) for k in ks] + [10 ** ((max(counts) + 1) / 20)]
-    values = [counts.get(k, 0) for k in ks]
-
-    fig, ax = plt.subplots(figsize=CHART_SIZE, dpi=CHART_DPI)
-    fig.patch.set_facecolor(SURFACE)
-    ax.set_facecolor(SURFACE)
-    ax.stairs(values, edges, fill=True, color=SERIES_BLUE, linewidth=0)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_ylim(bottom=0.8)
     kpi = cfg["kpi"]
-    thresholds = sorted([kpi["late_minutes"], *kpi["sensitivity_minutes"]])
     cap = next(r for r in rules["rules"] if r["id"] == "R03")["params"]["max_wait_minutes"]
-    top = ax.get_ylim()[1]
-    for m in thresholds:
-        ax.axvline(m, color=INK_MUTED, linewidth=1, linestyle=":")
-    ax.text(
-        thresholds[0] / 1.05,  # left of the first line, so it never meets the R03 label
-        top,
-        "late thresholds " + " / ".join(map(str, thresholds)) + " min",
-        color=INK_MUTED,
-        fontsize=8,
-        va="top",
-        ha="right",
-    )
-    ax.axvline(cap, color=INK_MUTED, linewidth=1, linestyle="--")
-    ax.text(cap * 1.08, top, f"R03 cap {cap} min", color=INK_MUTED, fontsize=8, va="top")
-    ax.set_xlabel("wait = pickup - request (minutes, log scale)", color=INK)
-    ax.set_ylabel("trips per 0.05-decade bin (log scale)", color=INK)
-    ax.set_title(
+    return charts.wait_histogram(
+        con.execute(queries["wait_log_histogram"]).df(),
+        path,
+        [kpi["late_minutes"], *kpi["sensitivity_minutes"]],
         "Wait distribution, positive waits only (negative waits: see R01/R12)",
-        color=INK,
-        fontsize=11,
-        loc="left",
+        cap=cap,
     )
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.tick_params(colors=INK_MUTED)
-    ax.grid(axis="y", color="#e6e5e1", linewidth=0.6)
-    ax.set_axisbelow(True)
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, facecolor=SURFACE, metadata={"Software": None})
-    plt.close(fig)
-    return path
 
 
 def profile(

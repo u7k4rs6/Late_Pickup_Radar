@@ -168,14 +168,21 @@ def test_zero_trip_time_never_divides(tmp_path):
 
 
 def test_first_reject_rule_wins_and_all_matches_are_recorded(tmp_path):
-    both = base_row(
+    both = base_row(  # 200-min wait (R03) and 120 mph by trip_time (R06)
         pickup_datetime=T0 + minutes(200),
         on_scene_datetime=T0 + minutes(199),
-        dropoff_datetime=T0 + minutes(200),  # R02 and R03
+        dropoff_datetime=T0 + minutes(215),
+        trip_miles=30.0,
     )
     con = run_rules([both], tmp_path)
     rule_id, rules = con.execute("SELECT rule_id, reject_rules FROM quarantine.trips").fetchone()
-    assert rule_id == "R02" and rules == ["R02", "R03"]
+    assert rule_id == "R03" and rules == ["R03", "R06"]
+
+
+def test_bad_dropoff_timestamp_is_kept_with_valid_wait(tmp_path):
+    con = run_rules([base_row(dropoff_datetime=T0 + minutes(5))], tmp_path)
+    row = con.execute("SELECT flag_r02, wait_minutes, trip_minutes FROM clean.trips").fetchone()
+    assert row == (True, 5.0, 15.0)  # trip_minutes from trip_time, not the broken timestamp
 
 
 def test_rows_reconcile(tmp_path):
@@ -188,7 +195,7 @@ def test_rows_reconcile(tmp_path):
 
 def test_trust_floor_refuses_to_publish(tmp_path):
     with pytest.raises(ValidationFailed) as exc:
-        run_rules([base_row(), CASES["R02"]], tmp_path, floor=0.95)
+        run_rules([base_row(), CASES["R03"]], tmp_path, floor=0.95)
     assert exc.value.exit_code == 3
 
 

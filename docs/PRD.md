@@ -123,12 +123,12 @@ Initial rule set (MUST be tuned against the real profile, and every threshold MU
 | rule_id | Rule | Severity | Business rationale |
 |---|---|---|---|
 | R01 | `pickup_datetime < request_datetime` | REJECT | Negative wait is impossible; indicates clock/entry error |
-| R02 | `dropoff_datetime <= pickup_datetime` | REJECT | Zero/negative trip; cannot be a completed trip |
+| R02 | `dropoff_datetime <= pickup_datetime` | FLAG | Dropoff timestamp defect: trip_time shows the trip happened, so the row is kept and excluded from dropoff-timestamp-derived fields only (amended after the 2026-07 profile; see assumptions.md F19) |
 | R03 | `wait_minutes > 180` | REJECT | 3h+ "wait" is a data artefact (e.g. scheduled ride entered as on-demand); threshold justified from p99.9 |
 | R04 | `pickup_datetime` outside target month | REJECT (quarantine as `out_of_period`) | Belongs to another month's file; would double count across months |
 | R05 | Exact duplicate row | REJECT (keep first, quarantine the other copies, flag the kept copy as survivor, log count) | Double submission by base |
 | R06 | Implied speed > 65 mph | REJECT | Physically implausible in NYC |
-| R07 | `abs(trip_time − (dropoff−pickup) seconds) > 120` | FLAG | Two sources of duration disagree — report which we trust and why (we trust timestamps) |
+| R07 | `abs(trip_time − (dropoff−pickup) seconds) > 120` | FLAG | Two sources of duration disagree — report which we trust and why (we trust `trip_time`, not timestamps: in the 2026-07 profile, rows that look faster than 65 mph by timestamps have dropoff 20 s after pickup on trips whose trip_time is ~22 min; `trip_minutes` is derived from `trip_time`; amended, see assumptions.md F15) |
 | R08 | `PULocationID in (264,265)` | FLAG | Unknown zone: kept in city-wide KPI, excluded from zone-level metrics |
 | R09 | `on_scene_datetime IS NULL` | FLAG | Dwell cannot be computed; do not impute — dwell metrics computed only where present, and stated |
 | R10 | `trip_miles = 0 and trip_time > 60` | FLAG | Likely GPS failure; excluded from speed metrics only |
@@ -161,7 +161,7 @@ Deliverables: `docs/data_model.md`, `docs/workflow.mmd` (state diagram), `docs/e
 - **Outcomes:** `is_late` (wait > threshold), wait, trip duration.
 
 ## 6.2 Relational model (star schema in DuckDB, schema `model`)
-- `model.fact_trip` — one row per clean trip: trip surrogate key, company_id, base_id, pu_zone_id, do_zone_id, request_ts, on_scene_ts, pickup_ts, dropoff_ts, request_hour_key (`YYYY-MM-DD HH`), wait_minutes, dwell_minutes, trip_minutes, trip_miles, driver_pay, is_late_8/10/15, shared_request, wav_request, plus all `flag_*` columns.
+- `model.fact_trip` — one row per clean trip: trip surrogate key, company_id, base_id, pu_zone_id, do_zone_id, request_ts, on_scene_ts, pickup_ts, dropoff_ts, request_hour_key (`YYYY-MM-DD HH`), wait_minutes, dwell_minutes, trip_minutes (from `trip_time`), trip_miles, driver_pay, is_late_8/10/15, shared_request, wav_request, plus all `flag_*` columns.
 - `model.fact_trip_event` — long form: (trip_key, event_type, event_ts) — 3–4 rows per trip. Built because it is the honest representation of the workflow and makes "time in state" a simple lag.
 - `model.dim_zone` — from S2; includes `is_unknown` flag.
 - `model.dim_company` — license → name (from dictionary), with a `source` column.

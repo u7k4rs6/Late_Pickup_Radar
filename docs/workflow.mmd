@@ -1,1 +1,24 @@
-%% Trip workflow state diagram: filled in phase 4.
+%% Late Pickup Radar: trip workflow (events, states, where each timestamp can be trusted)
+stateDiagram-v2
+    direction LR
+    [*] --> requested: request_datetime
+    requested --> on_scene: wait (driver en route)
+    on_scene --> picked_up: dwell = pickup - on_scene
+    requested --> picked_up: no captured arrival (R13 / R09)
+    picked_up --> dropped_off: trip_minutes = trip_time / 60
+    dropped_off --> [*]
+
+    note right of requested
+        KPI wait = pickup - request (A01)
+        R12: on_scene before request means a
+        pre-arranged ride, so the row leaves wait metrics
+    end note
+    note right of on_scene
+        Present only where on_scene < pickup.
+        Uber writes pickup into on_scene on 6.6% of trips
+        (R13): no arrival event, not a fake one.
+    end note
+    note right of dropped_off
+        Duration from trip_time; the dropoff
+        timestamp is flagged when it disagrees (R02, R07)
+    end note

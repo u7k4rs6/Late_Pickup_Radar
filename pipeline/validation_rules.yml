@@ -54,13 +54,6 @@ rules:
       2026-07: 0 rows. TLC partitions files by pickup time (footer pickup range is exactly the
       month). Kept as a guard for re-published or future months.
 
-  - id: R02
-    name: dropoff not after pickup
-    severity: REJECT
-    when: "dropoff_datetime <= pickup_datetime"
-    rationale: A zero or negative trip cannot be a completed trip.
-    evidence: "2026-07: 2 rows."
-
   - id: R01
     name: pickup before request, not pre-arranged
     severity: REJECT
@@ -115,6 +108,22 @@ rules:
       20 seconds against a median trip_time of 1,305 s: the dropoff timestamp is broken there, not
       the car fast. So speed uses trip_time, as the PRD formula does.
 
+  - id: R02
+    name: dropoff not after pickup (timestamp defect)
+    severity: FLAG
+    when: "dropoff_datetime <= pickup_datetime"
+    excludes: [timestamp_duration]
+    rationale: >-
+      The dropoff timestamp is not after pickup, but trip_time says the trip happened. That is
+      a timestamp defect, not a non-trip: the row is kept (its request-to-pickup wait is valid)
+      and left out of fields derived from the dropoff timestamp only.
+    evidence: >-
+      2026-07: 2 rows. One has trip_time 163 s, 0.48 mi and a 7.30 fare: a real trip with a
+      broken dropoff. The other has trip_time 1 s, 0 mi and a 9.16 fare. Neither affects the KPI.
+    prd_change: >-
+      PRD R02 was REJECT ("cannot be a completed trip"). Trip duration now comes from
+      trip_time, so a bad dropoff timestamp no longer makes the trip unusable.
+
   - id: R07
     name: trip_time disagrees with timestamps
     severity: FLAG
@@ -123,13 +132,16 @@ rules:
     when: "abs(duration_gap_seconds) > {max_gap_seconds}"
     excludes: [trip_duration]
     rationale: >-
-      Two sources of trip duration disagree by more than 2 minutes. We do not pick a winner:
-      the rows are left out of trip-duration metrics. Neither field enters the KPI.
+      Two sources of trip duration disagree by more than 2 minutes. trip_minutes comes from
+      trip_time (the more reliable source, F15); disagreeing rows are flagged and left out of
+      trip-duration metrics as a precaution. Neither field enters the KPI.
     evidence: >-
       2026-07: 323,291 rows (1.55%); median difference 0 s, p99 absolute difference 161 s.
+      Where they disagree badly, the timestamp is the broken one: rows that look faster than
+      65 mph by timestamps have a median dropoff - pickup of 20 s against a trip_time of 1,305 s.
     prd_change: >-
-      PRD said "we trust timestamps". The R06 profile shows dropoff timestamps 20 s after pickup
-      on trips with a 20-minute trip_time, so neither source is trusted blindly.
+      PRD said "we trust timestamps". The data says the opposite: trip_time is trusted and
+      trip_minutes is derived from it.
 
   - id: R08
     name: unknown pickup zone
@@ -222,7 +234,10 @@ rules:
     evidence: >-
       2026-07 Uber: whole-minute requests are 2.3% of 0-10 min waits (chance = 1.7%), 34.4% of
       30-60 min waits, 65.5% of 60-180 min waits, 98.3% of negative waits. Lyft does not show the
-      pattern outside negative waits (44.3%).
+      pattern outside negative waits (44.3%). Of 655,426 whole-minute rows, ~300,000 are already
+      R12. Among wait-eligible rows: 355,098 whole-minute vs 342,569 expected by chance (1/60),
+      an excess of ~12,500 likely reservations; late rate 11.30% vs 9.99% for the rest (1.13x).
+      Below the 2x promotion bar agreed in review, so R14 stays a sensitivity line.
     prd_change: New rule (not in PRD).
 
 assumptions:
