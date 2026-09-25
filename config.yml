@@ -16,7 +16,7 @@ paths:
 # DuckDB spills to temp_directory beyond memory_limit instead of failing.
 duckdb:
   memory_limit: 4GB
-  threads: 4
+  threads: 2
   temp_directory: data/warehouse/tmp
 
 # Offline sources for --sample-file runs (make demo, tests, CI): no network at all.

@@ -193,6 +193,12 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
 - **Floor text is never rounded (found in the phase 5 demos).** The first trust-floor demo printed
   "below the floor 100%" for a 99.999% floor. Shares are now printed without rounding them into a
   different number (`validate.share_text`), for the same reason M5 says 99.998%, not 100.00%.
+- **Default resource envelope: 2 threads, 4 GB (decided in review).** Verification run on
+  2026-09-25 at commit 28872cd plus this config change: 4:15 wall time, peak RSS 5.33 GB (2:27 and
+  5.73 GB at 4 threads). The metrics.csv sha256 was unchanged (774592203b9b5726), as were
+  incentive_cells.csv and the charts; only run metadata differed, so the committed outputs
+  (generated at a32f2ed) were kept. Halving the threads barely lowers the peak: most of it sits
+  outside DuckDB's buffer-pool limit. The recording runs the sample, not the full month.
 - **The warehouse is a working store, not an output.** A failed run can leave
   `data/warehouse/<month>.duckdb` with partly rebuilt `stage/clean/model` schemas; the next run
   rebuilds them from `raw.*`, and `raw.*` itself is swapped in atomically by load_raw.
