@@ -13,6 +13,7 @@ from typing import Any
 from pipeline.config import ROOT
 
 HASH_CHUNK = 1 << 20
+CLEAN_CHECK_PATHS = (".", ":!outputs", ":!docs/validation_rules.md")
 
 
 def sha256_file(path: Path) -> str:
@@ -50,7 +51,8 @@ def git_sha() -> str:
             ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
         )
         dirty = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            # Code/config changes only: the pipeline's own outputs never make its version dirty.
+            ["git", "status", "--porcelain", "--untracked-files=no", "--", *CLEAN_CHECK_PATHS],
             cwd=ROOT,
             capture_output=True,
             text=True,
