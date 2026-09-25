@@ -9,7 +9,7 @@ by `pipeline/ingest.py` into `data/raw/<month>/manifest.json`.
 
 | # | Business question | Information needed | Source system | Retrieval mode | Owner (real-world) | Grain | Known gaps / risks (verified) |
 |---|---|---|---|---|---|---|---|
-| S1 | How long do riders wait, where, when? | request / on_scene / pickup / dropoff timestamps; PU/DO zone; company; base; shared & WAV flags; pay | NYC TLC HVFHV trip records, monthly Parquet on TLC CloudFront | File (HTTP, Parquet) | NYC TLC (submitted by HVFHS licensees) | One row per trip | Only HV0003/HV0005 present; `on_scene_datetime` has **0 nulls** in 2026-07 (PRD expected nulls); Lyft WAV trips show `on_scene < request` on ~57% of rows in row group 0; `trip_miles` min −0.0 and `trip_time` min 0; `originating_base_num` 27% null; timestamps are naive (no tz) |
+| S1 | How long do riders wait, where, when? | request / on_scene / pickup / dropoff timestamps; PU/DO zone; company; base; shared & WAV flags; pay | NYC TLC HVFHV trip records, monthly Parquet on TLC CloudFront | File (HTTP, Parquet) | NYC TLC (submitted by HVFHS licensees) | One row per trip | Only HV0003/HV0005 present; `on_scene_datetime` has **0 nulls** in 2026-07 (PRD expected nulls); Lyft WAV trips show `on_scene < request` on ~57% of rows in row group 0; `trip_miles` min −0.0 and `trip_time` min 0; `originating_base_num` 27% null; timestamps are naive (no tz); **data dictionary (2025-03-18) is stale relative to the 2026-07 file** (says on_scene is WAV-only; it is populated on every row); files are partitioned by pickup time (R04 is a guard) |
 | S2 | What is zone 132? Which borough? | Zone ID → borough, zone, service zone | TLC Taxi Zone Lookup CSV | File (CSV) | NYC TLC | One row per zone (1–265) | 264 = `Unknown`/`N/A`; 265 = borough `N/A`, zone `Outside of NYC` |
 | S3 | Does weather explain late pickups? | Hourly precipitation, temperature, weather code | Open-Meteo Historical Weather API (archive) | API (JSON) | Open-Meteo (reanalysis) | One row per hour | Model grid, not a station; requested point snaps to a grid cell in **New Jersey**; local-time output is **not DST-aware** (see S3) |
 | S4 | Which company is `HV0003`? | License → company name | TLC HVFHV data dictionary (PDF) | Reference doc | NYC TLC | One row per license | Dictionary list is "as of September 2019"; base names not available from the SODA dataset checked (see S4) |
@@ -39,7 +39,9 @@ Notes:
 
 **Parquet footer (read remotely with HTTP range requests; full file not downloaded yet):**
 - Rows: **20,921,249**. Row groups: 20. Writer: `parquet-cpp-arrow version 21.0.0`.
-- SHA-256: _phase 2_ (recorded in `data/raw/2026-07/manifest.json`).
+- SHA-256: `8da280d9d23813aae02a6e1d1d1caa8b96eb5e8d38efcbc9a570faf1e418f5a8` (downloaded
+  2026-09-25 06:46:00 to 06:47:06 UTC, 511,176,663 bytes written == Content-Length; recorded in
+  `data/raw/2026-07/fhvhv_tripdata_2026-07.parquet.manifest.json`).
 
 Observed schema (25 columns). The names match the PRD's expected list exactly, and `cbd_congestion_fee` is present.
 Min / max / null counts come from the footer's row-group statistics:
@@ -82,12 +84,14 @@ fetched by range request, and are recorded because they bear on PRD rules:
 | HV0005 | N | 318,910 | 0.0 | 0.14 | 2.04 | 0.78 | 4.48 |
 | HV0005 | Y | 1,326 | 0.0 | 0.53 | **57.16** | 1.95 | **−2.97** |
 
-**Completeness (plan, executed in phase 2):**
-- bytes written == Content-Length.
+**Completeness (executed in phase 2, 2026-09-25):**
+- bytes written == Content-Length: 511,176,663 == 511,176,663.
 - footer readable, and row count 20,921,249 > 0.
 - pickup min/max cover the month; the footer already shows 2026-07-01 00:00:00 to 2026-07-31 23:59:59.
-- every day and every hour has rows.
-- the S5 band agrees.
+- every day and every hour has rows: 31/31 days, 744/744 wall-clock hours, 0 thin hours
+  (median 30,477 pickups/hour; WARN floor 5% of that), 0 rows with pickup outside the month.
+- `raw.trips` in DuckDB = 20,921,249 rows == footer.
+- the S5 band agrees: +62 rows (0.0003%, band 1%).
 
 ## S2: TLC Taxi Zone Lookup (CSV)
 
@@ -102,12 +106,19 @@ fetched by range request, and are recorded because they bear on PRD rules:
 ## S3: Open-Meteo Historical Weather (JSON API)
 
 - **Endpoint:** `https://archive-api.open-meteo.com/v1/archive`
-- **Request tested:** `latitude=40.7580&longitude=-73.9855&start_date=2026-07-01&end_date=2026-07-31&hourly=precipitation,temperature_2m,weather_code&timezone=America/New_York`
+- **Pipeline request (decided after phase 1):** `latitude=40.7829&longitude=-73.9654` (Central Park), `timezone=GMT`, date range = the UTC dates spanning the local month; converted to America/New_York locally.
+- **Request tested in phase 1:** `latitude=40.7580&longitude=-73.9855&start_date=2026-07-01&end_date=2026-07-31&hourly=precipitation,temperature_2m,weather_code&timezone=America/New_York`
 - HTTP **200**, `application/json; charset=utf-8`, 23,608 bytes, server Date Thu, 24 Sep 2026 21:16:54 GMT
 - Response: `timezone=America/New_York`, `timezone_abbreviation=GMT-4`, `utc_offset_seconds=-14400`,
   units `precipitation: mm`, `temperature_2m: °C`, `weather_code: wmo code`
 - **744 hourly rows** (2026-07-01T00:00 to 2026-07-31T23:00), 0 nulls in all three variables
 - July 2026: precipitation max 14.8 mm/h; **98 hours ≥ 0.5 mm**, 172 hours > 0; temperature 16.1 to 38.4 °C; weather codes 0 to 65
+
+**Pipeline download (phase 2):** 24,337 bytes, SHA-256
+`9b0ca1740e60f7bb2cdccc549743fdb9a02c34f9ac728b53697b60e1df8cc516`, URL
+`https://archive-api.open-meteo.com/v1/archive?latitude=40.7829&longitude=-73.9654&start_date=2026-07-01&end_date=2026-08-01&hourly=precipitation%2Ctemperature_2m%2Cweather_code&timezone=GMT`.
+It returns 768 UTC hours (32 whole UTC days); all 744 local July hours are present and contiguous.
+`raw.weather` keeps all 768 rows as returned, and the model selects the month.
 
 **Surprise 1: grid snapping.** The API returns the grid cell it used, not the requested point:
 
@@ -145,6 +156,13 @@ Requesting `timezone=GMT` and converting to America/New_York gives **743** local
 
 - **URL:** `https://www.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv` (linked from
   `https://www.nyc.gov/site/tlc/about/aggregated-reports.page`). HTTP **200**, 79,774 bytes.
+- **Access quirk (found in phase 2):** nyc.gov returns **403** to non-browser User-Agents
+  (`python-requests/2.34.2`, `curl/8.5.0`, and `Mozilla/5.0 (compatible; late-pickup-radar/0.1; +url)`
+  all got 403 on 2026-09-25). `Mozilla/5.0 (X11; Linux x86_64) late-pickup-radar/0.1` gets 200.
+  The pipeline sends that UA (`config.yml download.user_agent`). CloudFront (S1, S2) accepts any UA.
+  S5 is optional: if it still fails, the run WARNs and records `expected_counts: unavailable`.
+- Pipeline download (phase 2): 79,774 bytes, SHA-256 `47fa867bf3a72416b3eaca7770b44313fa5645fb5e8102f77f14c797c38ebf94`.
+  This file is regenerated monthly by TLC, so its checksum will change between runs.
 - Row for `2026-07, FHV - High Volume`: **674,877 trips per day**; also 5,355 shared trips per day.
 - 674,877 × 31 = **20,921,187** expected, against **20,921,249** Parquet rows. Difference +62 (0.0003%); the gap
   is consistent with rounding to whole trips per day. Proposed sanity band: ±1%, WARN outside it, not a hard fail.
