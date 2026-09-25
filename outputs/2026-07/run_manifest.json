@@ -1,0 +1,167 @@
+{
+  "completeness": {
+    "expected_counts": {
+      "band": 0.01,
+      "days": 31,
+      "delta": 62,
+      "delta_share": 2.9635029790613696e-06,
+      "expected_trips": 20921187,
+      "parquet_rows": 20921249,
+      "status": "within_band",
+      "trips_per_day": 674877
+    },
+    "trips": {
+      "created_by": "parquet-cpp-arrow version 21.0.0",
+      "days_with_rows": 31,
+      "expected_days": 31,
+      "expected_hours": 744,
+      "footer_rows": 20921249,
+      "hours_with_rows": 744,
+      "median_rows_per_hour": 30477.0,
+      "pickup_max_hour": "2026-07-31 23:00:00",
+      "pickup_min_hour": "2026-07-01 00:00:00",
+      "row_groups": 20,
+      "rows_outside_month": 0,
+      "thin_hours": [],
+      "zero_hours": []
+    },
+    "weather": {
+      "expected_local_hours": 744,
+      "grid_latitude": 40.808434,
+      "grid_longitude": -74.0199,
+      "local_hours_present": 744,
+      "nulls_in_month": {
+        "precipitation": 0,
+        "temperature_2m": 0,
+        "weather_code": 0
+      },
+      "response_timezone": "GMT",
+      "returned_hours": 768
+    },
+    "zones": {
+      "header": [
+        "LocationID",
+        "Borough",
+        "Zone",
+        "service_zone"
+      ],
+      "rows": 265
+    }
+  },
+  "finished_utc": "2026-09-25T06:49:49+00:00",
+  "git_sha": "063a1a4f42433e58995cf6623ece7a2ca79c45b2-dirty",
+  "log_file": "logs/run_2026-07_20260925T121940.log",
+  "parameters": {
+    "command": "run",
+    "force": false,
+    "month": "2026-07",
+    "no_weather": false,
+    "quiet": true,
+    "sample": null,
+    "sample_file": null
+  },
+  "pipeline_version": "0.1.0",
+  "raw_tables": {
+    "database": "data/warehouse/2026-07.duckdb",
+    "trips": 20921249,
+    "weather": 768,
+    "zones": 265
+  },
+  "reconciliation": {
+    "aggregate_report": {
+      "band": 0.01,
+      "days": 31,
+      "delta": 62,
+      "delta_share": 2.9635029790613696e-06,
+      "expected_trips": 20921187,
+      "parquet_rows": 20921249,
+      "status": "within_band",
+      "trips_per_day": 674877
+    },
+    "parquet_footer_rows": 20921249,
+    "raw_trips_rows": 20921249
+  },
+  "sources": {
+    "expected_counts": {
+      "bytes_written": 79774,
+      "cached": true,
+      "content_length": null,
+      "download_finished_utc": "2026-09-25T06:48:06+00:00",
+      "download_started_utc": "2026-09-25T06:48:06+00:00",
+      "headers": {
+        "Content-Type": "text/csv",
+        "Date": "Fri, 25 Sep 2026 06:48:06 GMT",
+        "ETag": "\"6ab11e3e-1379e:dtagent10345260810170330iVRF\"",
+        "Last-Modified": "Mon, 21 Sep 2026 12:08:29 GMT"
+      },
+      "http_status": 200,
+      "sha256": "47fa867bf3a72416b3eaca7770b44313fa5645fb5e8102f77f14c797c38ebf94",
+      "source": "expected_counts",
+      "url": "https://www.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv"
+    },
+    "trips": {
+      "bytes_written": 511176663,
+      "cached": true,
+      "content_length": 511176663,
+      "download_finished_utc": "2026-09-25T06:47:06+00:00",
+      "download_started_utc": "2026-09-25T06:46:00+00:00",
+      "headers": {
+        "Content-Length": "511176663",
+        "Content-Type": "binary/octet-stream",
+        "Date": "Fri, 25 Sep 2026 06:46:01 GMT",
+        "ETag": "\"0075ffa5d0ecb2946a4b4e8f2d7158a5-30\"",
+        "Last-Modified": "Thu, 17 Sep 2026 14:43:53 GMT"
+      },
+      "http_status": 200,
+      "sha256": "8da280d9d23813aae02a6e1d1d1caa8b96eb5e8d38efcbc9a570faf1e418f5a8",
+      "source": "trips",
+      "url": "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2026-07.parquet"
+    },
+    "weather": {
+      "bytes_written": 24337,
+      "cached": true,
+      "content_length": null,
+      "download_finished_utc": "2026-09-25T06:47:07+00:00",
+      "download_started_utc": "2026-09-25T06:47:06+00:00",
+      "headers": {
+        "Content-Type": "application/json; charset=utf-8",
+        "Date": "Fri, 25 Sep 2026 06:47:06 GMT"
+      },
+      "http_status": 200,
+      "sha256": "9b0ca1740e60f7bb2cdccc549743fdb9a02c34f9ac728b53697b60e1df8cc516",
+      "source": "weather",
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=40.7829&longitude=-73.9654&start_date=2026-07-01&end_date=2026-08-01&hourly=precipitation%2Ctemperature_2m%2Cweather_code&timezone=GMT"
+    },
+    "zones": {
+      "bytes_written": 12331,
+      "cached": true,
+      "content_length": 12331,
+      "download_finished_utc": "2026-09-25T06:47:06+00:00",
+      "download_started_utc": "2026-09-25T06:47:06+00:00",
+      "headers": {
+        "Content-Length": "12331",
+        "Content-Type": "text/csv",
+        "Date": "Thu, 24 Sep 2026 07:40:51 GMT",
+        "ETag": "\"c6064b7c144c716450641f769659d178\"",
+        "Last-Modified": "Thu, 22 Feb 2024 21:33:00 GMT"
+      },
+      "http_status": 200,
+      "sha256": "1a99e105092230f8620f301edcca7f80d3080642ff404d28ed957d3fa222c8ed",
+      "source": "zones",
+      "url": "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+    }
+  },
+  "stages": {
+    "ingest": {
+      "rows_in": 20921249,
+      "rows_out": 20921249
+    },
+    "load_raw": {
+      "rows_in": 20921249,
+      "rows_out": 20921249
+    }
+  },
+  "started_utc": "2026-09-25T06:49:40+00:00",
+  "status": "success",
+  "wall_time_seconds": 9.0
+}
