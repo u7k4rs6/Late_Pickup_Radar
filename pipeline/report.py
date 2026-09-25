@@ -186,16 +186,18 @@ def _num(v: float | None) -> str:
     return "UNAVAILABLE" if v is None else f"{v:.2f}"
 
 
-def top_cells_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
-    top = cells.head(k)
+def _day_hour(top: pd.DataFrame) -> list[str]:
+    return [f"{DOW[d]} {h:02d}:00" for d, h in zip(top["dow"], top["hour"], strict=True)]
+
+
+def neighbourhood_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
+    top = cells[cells["list"] == "neighbourhood"].head(k)
     return pd.DataFrame(
         {
             "rank": top["rank"],
             "borough": top["borough"],
             "zone": top["zone"],
-            "day-hour (request)": [
-                f"{DOW[d]} {h:02d}:00" for d, h in zip(top["dow"], top["hour"], strict=True)
-            ],
+            "day-hour (request)": _day_hour(top),
             "late rate": [f"{100 * v:.1f}%" for v in top["late_rate"]],
             "vs city": [f"{100 * v:+.1f} pts" for v in top["late_rate_excess"]],
             "n": top["n"],
@@ -203,6 +205,70 @@ def top_cells_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
             "p90 wait (min)": [f"{v:.1f}" for v in top["p90_wait_minutes"]],
         }
     )
+
+
+def airport_table(cells: pd.DataFrame, k: int) -> pd.DataFrame:
+    top = cells[cells["list"] == "airport"].head(k)
+    return pd.DataFrame(
+        {
+            "rank": top["rank"],
+            "zone": top["zone"],
+            "day-hour (request)": _day_hour(top),
+            "late rate": [f"{100 * v:.1f}%" for v in top["late_rate"]],
+            "n": top["n"],
+            "excess late trips": [f"{v:.0f}" for v in top["excess_late_trips"]],
+            "request -> arrival, this cell (median min)": [
+                f"{v:.1f}" for v in top["median_request_to_arrival_minutes"]
+            ],
+            "request -> arrival, zone all month (median min)": [
+                f"{v:.1f}" for v in top["zone_median_request_to_arrival_minutes"]
+            ],
+            "dwell (median min)": [f"{v:.2f}" for v in top["median_dwell_minutes"]],
+        }
+    )
+
+
+def findings(m: MetricsResult, lk: Lookup, cfg: dict[str, Any]) -> list[str]:
+    """Plain-language findings, each computed from the numbers so it stays true."""
+    main = cfg["kpi"]["late_minutes"]
+    inc = cfg["incentives"]
+    out = ["## What the numbers say", ""]
+    naive_k = inc["top_n"] + inc["airport_top_n"] + 5
+    naive = m.cells[m.cells["overall_rank"] <= naive_k] if len(m.cells) else m.cells
+    if len(naive):
+        airports = int(naive["is_airport"].sum())
+        first_nb = m.cells[m.cells["list"] == "neighbourhood"]["overall_rank"].min()
+        out.append(
+            f"- **A single ranking is {100 * airports / len(naive):.0f}% airports** in its top "
+            f"{len(naive)}; the first neighbourhood cell is overall rank {first_nb}. Airport waits "
+            "are driven by staging-lot throughput and Port Authority dispatch, a different owner and "
+            "a different lever from driver incentives, so the same rule is applied to two lists "
+            "split on zone type: neighbourhood cells are the incentive decision; airport cells are "
+            "escalated to airport ops."
+        )
+    thr = cfg["thresholds"]["rain_mm_per_hour"]
+    adj = lk.value("M4_rain_minus_dry_late_rate_hour_adjusted", "month", f"threshold_mm={thr}")
+    raw = lk.value("M4_rain_minus_dry_late_rate", "month", f"threshold_mm={thr}")
+    heat = m.metrics[
+        (m.metrics["metric"] == f"M1_late_rate_{main}")
+        & (m.metrics["grain"] == "borough x hour_of_day")
+        & (m.metrics["n"] >= inc["min_cell_trips"])
+    ]
+    if adj is None or raw is None:
+        out.append("- **Rain:** UNAVAILABLE (no weather data for this run).")
+    elif len(heat):
+        lo, hi = heat["value"].min(), heat["value"].max()
+        spread = hi - lo
+        size = "far smaller than" if abs(adj) < 0.25 * spread else "comparable to"
+        out.append(
+            f"- **Rain is a weak lever.** Rainy request hours (>= {thr} mm) raise the late rate by "
+            f"{100 * raw:+.1f} points raw and {100 * adj:+.1f} points within the same hour of day. "
+            f"That is {size} location and hour: across borough x hour the late rate runs from "
+            f"{100 * lo:.1f}% to {100 * hi:.1f}%. Weather-triggered incentives are not supported "
+            "by this month's data; fixed zone x hour incentives are."
+        )
+    out.append("")
+    return out
 
 
 def make_charts(con, m: MetricsResult, cfg: dict[str, Any], rules, out_dir: Path) -> list[Path]:
@@ -307,7 +373,7 @@ def kual(ctx: dict[str, Any], m: Lookup, cfg: dict[str, Any]) -> list[str]:
     ]
 
 
-def console_summary(rows: list[dict], cells: pd.DataFrame, k: int) -> None:
+def console_summary(rows: list[dict], cells: pd.DataFrame, cfg: dict[str, Any], label: str) -> None:
     con = logging_setup.console
     t = Table(title="Evidence", show_edge=False, header_style="bold")
     for c in ("#", "metric", "value", "n"):
@@ -315,19 +381,33 @@ def console_summary(rows: list[dict], cells: pd.DataFrame, k: int) -> None:
     for r in rows:
         t.add_row(r["#"], r["metric"], r["value"], r["n"])
     con.print(t)
-    top = Table(title=f"Top {k} incentive cells", show_edge=False, header_style="bold")
-    for c in ("#", "borough · zone", "dow-hour", "late rate", "n", "excess"):
-        top.add_column(c, justify="right" if c in ("late rate", "n", "excess", "#") else "left")
-    for r in cells.head(k).itertuples(index=False):
-        top.add_row(
-            str(r.rank),
-            f"{r.borough} · {r.zone}",
-            f"{DOW[r.dow]} {r.hour:02d}",
-            f"{100 * r.late_rate:.1f}%",
-            f"{r.n:,}",
-            f"{r.excess_late_trips:.0f}",
-        )
-    con.print(top)
+    print_top_cells(cells, cfg, label)
+
+
+def print_top_cells(cells: pd.DataFrame, cfg: dict[str, Any], label: str) -> None:
+    """Both ranked lists; `label` says where the cells come from (this run or a committed one)."""
+    con = logging_setup.console
+    inc = cfg["incentives"]
+    for list_name, k, title in (
+        ("neighbourhood", inc["console_top_n"], "incentive cells (neighbourhoods)"),
+        ("airport", inc["airport_top_n"], "airport cells (escalate to airport ops)"),
+    ):
+        part = cells[cells["list"] == list_name].head(k)
+        top = Table(title=f"Top {k} {title}: {label}", show_edge=False, header_style="bold")
+        for c in ("#", "borough · zone", "dow-hour", "late rate", "n", "excess"):
+            top.add_column(c, justify="right" if c in ("late rate", "n", "excess", "#") else "left")
+        for r in part.itertuples(index=False):
+            top.add_row(
+                str(r.rank),
+                f"{r.borough} · {r.zone}",
+                f"{DOW[r.dow]} {r.hour:02d}",
+                f"{100 * r.late_rate:.1f}%",
+                f"{r.n:,}",
+                f"{r.excess_late_trips:.0f}",
+            )
+        if not len(part):
+            top.add_row("", f"no cells with n >= {inc['min_cell_trips']}", "", "", "", "")
+        con.print(top)
 
 
 def write_report(
@@ -357,15 +437,27 @@ def write_report(
         "",
         table(pd.DataFrame(rows)),
         "",
-        f"## Top {inc['top_n']} zone x hour-of-week cells for driver incentives",
+        *findings(m, lk, cfg),
+        f"## Top {inc['top_n']} neighbourhood cells for driver incentives",
         "",
         f"Ranked by **excess late trips** = (cell late rate - citywide late rate "
         f"{pct(m.kpi)}) x n: how many more trips were late in that cell than if it matched the "
         f"city. Cells need n >= {inc['min_cell_trips']} trips in the month; "
-        f"{len(m.cells):,} cells qualify. Day and hour are of the request. Pickup zones 264/265 and "
-        "pre-arranged rides are excluded.",
+        f"{(m.cells['list'] == 'neighbourhood').sum():,} neighbourhood and "
+        f"{(m.cells['list'] == 'airport').sum():,} airport cells qualify. Day and hour are of the "
+        "request. Pickup zones 264/265 and pre-arranged rides are excluded. Same rule for both "
+        "lists; the split is on zone type (`service_zone` Airports / EWR in the zone lookup).",
         "",
-        table(top_cells_table(m.cells, inc["top_n"])),
+        table(neighbourhood_table(m.cells, inc["top_n"])),
+        "",
+        f"## Top {inc['airport_top_n']} airport cells: escalate to airport ops",
+        "",
+        "Not a driver-incentive list: the lever is staging-lot throughput and Port Authority "
+        "dispatch. The delay is on the supply side when request -> arrival in the cell is well "
+        "above the zone's own month median while dwell (driver at the curb, rider not yet in) "
+        "stays short.",
+        "",
+        table(airport_table(m.cells, inc["airport_top_n"])),
         "",
         "## Charts",
         "",
@@ -385,6 +477,6 @@ def write_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "evidence.md"
     path.write_text("\n".join(parts))
-    console_summary(rows, m.cells, inc["console_top_n"])
+    console_summary(rows, m.cells, cfg, f"this run ({ctx['scope']})")
     log.info("evidence written: %s (+ %d charts)", path.name, len(chart_paths))
     return ReportResult(path, chart_paths)

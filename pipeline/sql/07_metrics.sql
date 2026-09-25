@@ -1,4 +1,6 @@
 -- Metrics M1-M5 (PRD 6.3) in long format: metric, grain, dimensions, value, n, note.
+-- Reporting grains only (month, company, company x WAV, borough, borough x hour, rainy/dry,
+-- rule). Cell-level numbers (zone x dow x hour) live in incentive_cells.csv only.
 -- Every exclusion is an explicit WHERE on a named flag column, tagged "-- families: ...";
 -- tests/test_metrics.py checks each tag against the `excludes` lists in validation_rules.yml.
 --   wait  -> NOT flag_r12                  (pre-arranged: request is not the rider's ask)
@@ -57,20 +59,6 @@ JOIN model.dim_zone z ON z.zone_id = f.pu_zone_id
 WHERE NOT f.flag_r12 AND NOT f.flag_r08  -- families: wait, zone
 GROUP BY z.borough, f.request_hour;
 
--- name: m1_m2_cells
--- Decision grain: zone x day-of-week x hour, eligible cells only (n >= min_cell_trips).
-SELECT 'M1_late_rate_{late_main}' AS metric, 'pu_zone x dow x hour' AS grain,
-       'pu_zone=' || lpad(pu_zone_id::VARCHAR, 3, '0') || '|dow=' || dow::VARCHAR
-           || '|hour=' || lpad(hour::VARCHAR, 2, '0') AS dimensions,
-       late_rate AS value, n, NULL AS note
-FROM model.incentive_cells WHERE eligible
-UNION ALL
-SELECT 'M2_p90_wait_minutes', 'pu_zone x dow x hour',
-       'pu_zone=' || lpad(pu_zone_id::VARCHAR, 3, '0') || '|dow=' || dow::VARCHAR
-           || '|hour=' || lpad(hour::VARCHAR, 2, '0'),
-       p90_wait_minutes, n, NULL
-FROM model.incentive_cells WHERE eligible;
-
 -- name: m2_month
 SELECT 'M2_p90_wait_minutes' AS metric, 'month' AS grain, '' AS dimensions,
        quantile_cont(wait_minutes, 0.9) AS value, count(*) AS n, NULL AS note
@@ -78,19 +66,13 @@ FROM model.fact_trip
 WHERE NOT flag_r12;  -- families: wait
 
 -- name: m3_dwell
--- Median on-scene dwell where arrival was captured, by company and by pickup zone, plus the
--- coverage it rests on (captured / clean rows) by company.
+-- Median on-scene dwell where arrival was captured, by company, plus the coverage it rests
+-- on (captured / clean rows).
 SELECT 'M3_median_dwell_minutes' AS metric, 'company' AS grain, 'company=' || company_id AS dimensions,
        median(dwell_minutes) AS value, count(*) AS n, NULL AS note
 FROM model.fact_trip
 WHERE NOT flag_r09 AND NOT flag_r13  -- families: dwell
 GROUP BY company_id
-UNION ALL
-SELECT 'M3_median_dwell_minutes', 'pu_zone', 'pu_zone=' || lpad(pu_zone_id::VARCHAR, 3, '0'),
-       median(dwell_minutes), count(*), NULL
-FROM model.fact_trip
-WHERE NOT flag_r09 AND NOT flag_r13 AND NOT flag_r08  -- families: dwell, zone
-GROUP BY pu_zone_id
 UNION ALL
 SELECT 'M3_dwell_coverage', 'company', 'company=' || company_id,
        avg((NOT flag_r09 AND NOT flag_r13)::INTEGER), count(*), 'share of clean rows with on_scene < pickup'

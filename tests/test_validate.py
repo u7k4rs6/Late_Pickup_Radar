@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import duckdb
 import pandas as pd
 import pytest
+from fixtures import T0, base_row  # noqa: E402  (tests/ is on sys.path)
 
 from pipeline import profile, validate
 from pipeline.config import load_config
@@ -15,40 +16,6 @@ from pipeline.errors import ValidationFailed
 CFG = load_config()
 RULES = validate.load_rules()
 BOUNDS = ("2026-07-01", "2026-08-01")
-T0 = datetime(2026, 7, 15, 12, 0, 7)
-
-
-def base_row(**overrides) -> dict:
-    """A clean, unremarkable trip: 5 min wait, 1 min dwell, 3 miles in 15 minutes."""
-    row = {
-        "hvfhs_license_num": "HV0003",
-        "dispatching_base_num": "B03404",
-        "originating_base_num": "B03404",
-        "request_datetime": T0,
-        "on_scene_datetime": T0 + timedelta(minutes=4),
-        "pickup_datetime": T0 + timedelta(minutes=5),
-        "dropoff_datetime": T0 + timedelta(minutes=20),
-        "PULocationID": 161,
-        "DOLocationID": 237,
-        "trip_miles": 3.0,
-        "trip_time": 900,
-        "base_passenger_fare": 20.0,
-        "tolls": 0.0,
-        "bcf": 0.5,
-        "sales_tax": 1.8,
-        "congestion_surcharge": 2.75,
-        "airport_fee": 0.0,
-        "tips": 0.0,
-        "driver_pay": 15.0,
-        "shared_request_flag": "N",
-        "shared_match_flag": "N",
-        "access_a_ride_flag": "N",
-        "wav_request_flag": "N",
-        "wav_match_flag": "N",
-        "cbd_congestion_fee": 0.0,
-    }
-    row.update(overrides)
-    return row
 
 
 def minutes(n: float) -> timedelta:

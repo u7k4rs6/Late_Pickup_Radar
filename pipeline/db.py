@@ -49,5 +49,20 @@ def named_queries(name: str, **params: object) -> dict[str, str]:
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts), 2)}
 
 
+def connect(cfg: dict | None = None, path: str | Path | None = None) -> duckdb.DuckDBPyConnection:
+    """DuckDB connection with the configured memory limit, threads and spill directory."""
+    con = duckdb.connect(str(path) if path is not None else ":memory:")
+    if cfg is not None and "duckdb" in cfg:
+        from pipeline.config import resolve_path
+
+        d = cfg["duckdb"]
+        tmp = resolve_path(d["temp_directory"])
+        tmp.mkdir(parents=True, exist_ok=True)
+        con.execute(f"SET memory_limit = {sql_literal(d['memory_limit'])}")
+        con.execute(f"SET threads = {int(d['threads'])}")
+        con.execute(f"SET temp_directory = {sql_literal(tmp)}")
+    return con
+
+
 def query_df(con: duckdb.DuckDBPyConnection, sql: str) -> pd.DataFrame:
     return con.execute(sql).df()

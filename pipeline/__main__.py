@@ -58,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--force", action="store_true", help="re-download even if cached")
     run.add_argument("--quiet", action="store_true", help="plain console output (CI)")
+    run.add_argument("--config", metavar="PATH", help="config file (default: config.yml)")
 
     show = sub.add_parser("show", help="read-only inspection of a finished run")
     show.add_argument("target", choices=SHOW_TARGETS)
@@ -68,19 +69,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
-    import duckdb
-
+    from pipeline import db
     from pipeline import ingest as ing
     from pipeline.config import ROOT, load_config, resolve
+    from pipeline.errors import ValidationFailed
     from pipeline.logging_setup import log, rows_line, setup_logging, stage
     from pipeline.manifest import git_sha, repo_relative, sha256_file, utc_now, write_json_atomic
     from pipeline.metrics import compute_metrics
     from pipeline.model import build_model
     from pipeline.profile import profile as profile_stage
+    from pipeline.publish import make_staging, new_run_id, publish, record_failure
     from pipeline.report import write_report
     from pipeline.validate import load_rules, validate
 
-    cfg = load_config()
+    cfg = load_config(Path(args.config) if args.config else None)
     sample_file = Path(args.sample_file).resolve() if args.sample_file else None
     if sample_file:
         tag, out_name = f"{args.month}-sample-file", "demo"
@@ -91,19 +93,26 @@ def run(args: argparse.Namespace) -> int:
     out_dir = resolve(cfg, "outputs_dir") / out_name
     full_run = sample_file is None and args.sample is None
     log_path = setup_logging(resolve(cfg, "logs_dir"), args.month, quiet=args.quiet)
+    run_id = new_run_id()
 
     t0 = time.perf_counter()
     manifest: dict = {
         "pipeline_version": __version__,
         "git_sha": git_sha(),
+        "run_id": run_id,
         "started_utc": utc_now(),
         "parameters": {k: v for k, v in vars(args).items() if k != "func"},
+        "config": {k: cfg[k] for k in ("kpi", "thresholds", "incentives", "duckdb")},
         "log_file": repo_relative(log_path),
+        "outputs": repo_relative(out_dir),
         "stages": {},
         "status": "running",
     }
     current = "ingest"
+    staging: Path | None = None
+    code = EXIT_INTERNAL
     try:
+        staging = make_staging(resolve(cfg, "staging_dir"), out_name, run_id)
         with stage("ingest"):
             result = ing.ingest(
                 args.month,
@@ -122,7 +131,7 @@ def run(args: argparse.Namespace) -> int:
 
         current = "load_raw"
         with stage("load_raw"):
-            counts = ing.load_raw(result, resolve(cfg, "warehouse_dir"), tag)
+            counts = ing.load_raw(result, resolve(cfg, "warehouse_dir"), tag, cfg)
             rows_line("load_raw", footer, counts["trips"])
             manifest["stages"]["load_raw"] = {"rows_in": footer, "rows_out": counts["trips"]}
             manifest["raw_tables"] = counts
@@ -135,11 +144,11 @@ def run(args: argparse.Namespace) -> int:
 
         rules = load_rules()
         bounds = (str(ing.month_start(args.month)), str(ing.next_month_start(args.month)))
-        con = duckdb.connect(counts_db_path(cfg, tag))
+        con = db.connect(cfg, counts_db_path(cfg, tag))
         try:
             current = "profile"
             with stage("profile"):
-                prof = profile_stage(con, args.month, cfg, rules, out_dir, bounds, args.sample)
+                prof = profile_stage(con, args.month, cfg, rules, staging, bounds, args.sample)
                 rows_line("profile", prof.rows_in, prof.rows_out)
                 manifest["stages"]["profile"] = {
                     "rows_in": prof.rows_in,
@@ -149,8 +158,7 @@ def run(args: argparse.Namespace) -> int:
 
             current = "validate"
             with stage("validate"):
-                docs = ROOT / "docs" / "validation_rules.md" if full_run else None
-                val = validate(con, args.month, cfg, rules, out_dir, bounds, docs_path=docs)
+                val = validate(con, args.month, cfg, rules, staging, bounds)
                 rows_line("validate", val.rows_in, val.rows_clean)
                 manifest["stages"]["validate"] = {
                     "rows_in": val.rows_in,
@@ -179,13 +187,14 @@ def run(args: argparse.Namespace) -> int:
 
             current = "metrics"
             with stage("metrics"):
-                met = compute_metrics(con, cfg, out_dir)
+                met = compute_metrics(con, cfg, staging)
                 rows_line("metrics", mod.fact_trips, len(met.metrics))
                 manifest["stages"]["metrics"] = {
                     "rows_in": mod.fact_trips,
                     "rows_out": len(met.metrics),
                     "eligible_cells": len(met.cells),
                     "metrics_csv_sha256": sha256_file(met.metrics_path),
+                    "incentive_cells_csv_sha256": sha256_file(met.cells_path),
                 }
                 manifest["kpi"] = {
                     "late_rate": met.kpi,
@@ -207,36 +216,55 @@ def run(args: argparse.Namespace) -> int:
                     "completeness": result.completeness,
                     "trust": val.trust,
                 }
-                rep = write_report(con, args.month, cfg, rules, met, ctx, out_dir)
+                rep = write_report(con, args.month, cfg, rules, met, ctx, staging)
                 rows_line("report", len(met.metrics), len(met.metrics))
                 manifest["stages"]["report"] = {
                     "rows_in": len(met.metrics),
                     "rows_out": len(met.metrics),
-                    "evidence": repo_relative(rep.evidence_path),
-                    "charts": [repo_relative(p) for p in rep.chart_paths],
+                    "charts": len(rep.chart_paths),
+                    "files": sorted(str(p.relative_to(staging)) for p in staging.rglob("*.*")),
                 }
         finally:
             con.close()
+
+        current = "publish"
         manifest["status"] = "success"
-        code = EXIT_OK
+        manifest["wall_time_seconds"] = round(time.perf_counter() - t0, 1)
+        manifest["finished_utc"] = utc_now()
+        write_json_atomic(staging / "run_manifest.json", manifest)
+        publish(staging, out_dir)
+        staging = None
+        if full_run:
+            (ROOT / "docs" / "validation_rules.md").write_text(val.rules_doc)
+        log.info(
+            "outputs published atomically: %s (status success, exit 0)", repo_relative(out_dir)
+        )
+        return EXIT_OK
     except PipelineError as exc:
         log.error("%s", exc)
-        manifest["status"] = f"failed_at:{current}"
+        if isinstance(exc, ValidationFailed):
+            manifest["trust"] = exc.trust
+            manifest["rule_counts"] = exc.rule_counts
         manifest["error"] = str(exc)
         code = exc.exit_code
+    except KeyboardInterrupt:
+        log.error("interrupted during %s", current)
+        manifest["error"] = "interrupted"
+        code = 130
     except Exception as exc:  # internal error: record it, exit 4
         log.exception("internal error in %s", current)
-        manifest["status"] = f"failed_at:{current}"
         manifest["error"] = repr(exc)
         code = EXIT_INTERNAL
 
+    manifest["status"] = f"failed_at:{current}"
+    manifest["exit_code"] = code
     manifest["wall_time_seconds"] = round(time.perf_counter() - t0, 1)
     manifest["finished_utc"] = utc_now()
-    write_json_atomic(out_dir / "run_manifest.json", manifest)
-    log.info(
-        "run manifest: %s (status %s, exit %d)",
-        out_dir / "run_manifest.json",
-        manifest["status"],
+    failed = record_failure(staging, out_dir, manifest, run_id)
+    log.error(
+        "no outputs published; %s left untouched. Failed-run manifest: %s (exit %d)",
+        repo_relative(out_dir),
+        repo_relative(failed),
         code,
     )
     return code

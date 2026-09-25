@@ -19,7 +19,12 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     return cfg
 
 
-def resolve(cfg: dict[str, Any], key: str) -> Path:
-    """Path from cfg['paths'][key], relative to the repo root unless absolute."""
-    p = Path(cfg["paths"][key])
+def resolve_path(value: str | Path) -> Path:
+    """A config path, relative to the repo root unless absolute."""
+    p = Path(value)
     return p if p.is_absolute() else ROOT / p
+
+
+def resolve(cfg: dict[str, Any], key: str) -> Path:
+    """Path from cfg['paths'][key]."""
+    return resolve_path(cfg["paths"][key])

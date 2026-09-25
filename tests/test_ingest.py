@@ -4,10 +4,9 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 import requests
+from fixtures import month_trips, write_parquet  # noqa: E402
 
 from pipeline import ingest
 from pipeline.config import load_config
@@ -166,18 +165,7 @@ def test_malformed_json_never_becomes_a_cached_file(tmp_path, monkeypatch):
 
 
 def _trips_parquet(path: Path, month: str, drop_hour: int | None = None) -> Path:
-    hours = ingest.wall_clock_hours(month, TZ)
-    rows = [h + timedelta(minutes=5) for i, h in enumerate(hours) if i != drop_hour]
-    table = pa.table(
-        {
-            "request_datetime": pa.array(
-                [t - timedelta(minutes=4) for t in rows], pa.timestamp("us")
-            ),
-            "pickup_datetime": pa.array(rows, pa.timestamp("us")),
-        }
-    )
-    pq.write_table(table, path)
-    return path
+    return write_parquet(month_trips(ingest.wall_clock_hours(month, TZ), drop_hour), path)
 
 
 def test_trips_check_passes_with_every_hour_present(tmp_path):
@@ -248,3 +236,20 @@ def test_aggregate_band_is_recorded_not_enforced(tmp_path):
     assert (ok["expected_trips"], ok["delta"], ok["status"]) == (20_921_187, 62, "within_band")
     off = ingest.expected_trips(csv_path, "2026-07", 10_000_000, CFG)
     assert off["status"] == "outside_band"  # a WARN, never an exception
+
+
+def test_missing_column_is_schema_drift(tmp_path):
+    rows = month_trips(ingest.wall_clock_hours("2026-07", TZ))
+    for r in rows:
+        del r["on_scene_datetime"]
+    with pytest.raises(CompletenessError, match="schema drift") as exc:
+        ingest.check_trips(write_parquet(rows, tmp_path / "t.parquet"), "2026-07", CFG)
+    assert exc.value.exit_code == 2
+
+
+def test_extra_column_is_only_a_warning(tmp_path):
+    rows = month_trips(ingest.wall_clock_hours("2026-07", TZ))
+    for r in rows:
+        r["new_fee"] = 1.0
+    out = ingest.check_trips(write_parquet(rows, tmp_path / "t.parquet"), "2026-07", CFG)
+    assert out["schema"]["extra"] == ["new_fee"]

@@ -42,6 +42,11 @@ def model_params(month: str, cfg: dict[str, Any], rules: dict[str, Any]) -> dict
         "unknown_zone_ids": db.Fragment(
             "(" + ", ".join(map(str, r08["params"]["unknown_zone_ids"])) + ")"
         ),
+        "airport_service_zones": db.Fragment(
+            "("
+            + ", ".join(db.sql_literal(z) for z in cfg["incentives"]["airport_service_zones"])
+            + ")"
+        ),
         "companies_source": ref["companies_source"],
         "company_values": db.Fragment(
             ", ".join(

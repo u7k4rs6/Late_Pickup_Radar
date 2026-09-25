@@ -7,6 +7,22 @@ paths:
   warehouse_dir: data/warehouse
   outputs_dir: outputs
   logs_dir: logs
+  # Outputs are written here first and swapped into outputs/<name>/ only when every stage
+  # succeeded; a failed run leaves outputs/<name>/ untouched and writes its manifest to
+  # outputs/<name>/failed/run_manifest_<timestamp>.json.
+  staging_dir: outputs/.staging
+
+# Same resource envelope on every machine: a run that fits here fits on a small laptop.
+# DuckDB spills to temp_directory beyond memory_limit instead of failing.
+duckdb:
+  memory_limit: 4GB
+  threads: 4
+  temp_directory: data/warehouse/tmp
+
+# Offline sources for --sample-file runs (make demo, tests, CI): no network at all.
+sample:
+  zones_file: data/sample/zones.csv
+  weather_file: data/sample/weather_sample.json
 
 sources:
   # Verified in phase 1 (2026-09-24): see docs/source_map.md for status codes and headers.
@@ -17,6 +33,13 @@ sources:
   expected_counts_url: https://www.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv
   expected_counts_license_class: FHV - High Volume
   data_dictionary_url: https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf
+  # Observed 2026-07 schema (source_map.md S1). A missing column fails ingest (exit 2: schema
+  # drift is a source problem); an extra column is a WARN (TLC adds fee columns over time).
+  trips_expected_columns: [hvfhs_license_num, dispatching_base_num, originating_base_num,
+    request_datetime, on_scene_datetime, pickup_datetime, dropoff_datetime, PULocationID,
+    DOLocationID, trip_miles, trip_time, base_passenger_fare, tolls, bcf, sales_tax,
+    congestion_surcharge, airport_fee, tips, driver_pay, shared_request_flag, shared_match_flag,
+    access_a_ride_flag, wav_request_flag, wav_match_flag, cbd_congestion_fee]
 
 reference:
   # License -> company, from the HVFHV data dictionary dated 2025-03-18 (source_map S4).
@@ -52,14 +75,20 @@ thresholds:
   # 0.1-0.4 mm hours are drizzle-level model noise (assumptions.md F20).
   rain_mm_per_hour: 0.5
   rain_sensitivity_mm_per_hour: 2.5  # "moderate rain" line for M4 robustness
-  trust_floor: 0.95                # PLACEHOLDER: M5 hard-fail floor (PRD 7)
+  trust_floor: 0.95                # M5 hard-fail floor (PRD 7); 2026-07 observed 99.998%
 
 incentives:
   # Decision grain: pickup zone x day-of-week x hour-of-day, on the REQUEST timestamp (the
   # rider's ask is when supply is needed). Ranked by excess late trips =
   # (cell late rate - citywide late rate) x n, only for cells with n >= min_cell_trips.
   min_cell_trips: 200              # justified in assumptions.md (binomial error at n = 200)
-  top_n: 20
+  # Airports are ranked as a separate list: their lever is staging-lot throughput and Port
+  # Authority dispatch (a different owner), not driver incentives. Partition is on zone type
+  # from the zone lookup's service_zone (Airports = 132 JFK, 138 LGA; EWR = 1 Newark), never on
+  # the numbers. assumptions.md F25.
+  airport_service_zones: [Airports, EWR]
+  top_n: 10                        # neighbourhood list (the incentive decision)
+  airport_top_n: 5                 # airport list (escalate to airport ops)
   console_top_n: 10
 
 download:

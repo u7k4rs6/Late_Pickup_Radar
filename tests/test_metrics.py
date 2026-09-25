@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import duckdb
 import pandas as pd
 import pytest
-from test_validate import base_row
+from fixtures import base_row
 
 from pipeline import metrics, model, profile, report, validate
 from pipeline.config import load_config
@@ -63,10 +63,10 @@ def weather_rows() -> pd.DataFrame:
     )
 
 
-def build(tmp_path, min_cell_trips: int = 1):
+def build(tmp_path, min_cell_trips: int = 1, rows: list[dict] | None = None):
     cfg = {**CFG, "incentives": {**CFG["incentives"], "min_cell_trips": min_cell_trips}}
     con = duckdb.connect()
-    df = pd.DataFrame(FIXTURE)
+    df = pd.DataFrame(rows if rows is not None else FIXTURE)
     df["PULocationID"] = df["PULocationID"].astype("int32")
     df["DOLocationID"] = df["DOLocationID"].astype("int32")
     con.execute("CREATE SCHEMA raw")
@@ -77,7 +77,9 @@ def build(tmp_path, min_cell_trips: int = 1):
     con.execute(
         "CREATE TABLE raw.zones AS SELECT i AS LocationID, "
         "CASE WHEN i = 264 THEN 'Unknown' WHEN i = 265 THEN 'N/A' WHEN i <= 100 THEN 'Queens' "
-        "ELSE 'Manhattan' END AS Borough, 'Z' || i AS Zone, 'S' AS service_zone "
+        "ELSE 'Manhattan' END AS Borough, 'Z' || i AS Zone, "
+        "CASE WHEN i IN (132, 138) THEN 'Airports' WHEN i = 1 THEN 'EWR' ELSE 'Boro Zone' END "
+        "AS service_zone "
         "FROM range(1, 266) t(i)"
     )
     con.register("weather_df", weather_rows())
@@ -212,7 +214,8 @@ def test_report_renders(tmp_path):
     }
     rep = report.write_report(con, "2026-07", cfg, RULES, res, ctx, tmp_path)
     text = rep.evidence_path.read_text()
-    assert "Evidence table" in text and "Top 20" in text and "Known" in text
+    assert "Evidence table" in text and "neighbourhood cells" in text and "Known" in text
+    assert "escalate to airport ops" in text and "What the numbers say" in text
     assert len(rep.chart_paths) == 3
 
 
@@ -240,3 +243,16 @@ def test_sql_exclusions_match_validation_rules(sql_file):
         want = set() if families == ["none"] else expected_flags(families)
         assert used == want, f"{sql_file}: {line.strip()}"
     assert tagged > 0
+
+
+def test_airports_are_a_separate_list_ranked_by_the_same_rule(tmp_path):
+    lga = [trip(T12, 25, 138), trip(T12, 30, 138)]  # 100% late at LaGuardia
+    con, _, res = build(tmp_path, rows=FIXTURE + lga)
+    airport_ids = {
+        r[0] for r in con.execute("SELECT zone_id FROM model.dim_zone WHERE is_airport").fetchall()
+    }
+    assert airport_ids == {1, 132, 138}  # from service_zone, not hard-coded
+    cells = res.cells.set_index("pu_zone_id")
+    assert cells.loc[138, "list"] == "airport" and cells.loc[138, "rank"] == 1
+    assert cells.loc[138, "overall_rank"] == 1  # a single ranking would put the airport first
+    assert cells.loc[161, "list"] == "neighbourhood" and cells.loc[161, "rank"] == 1

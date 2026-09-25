@@ -149,6 +149,44 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
   Port-Authority staging lots, so airport incentives may be a different lever. Whether to rank
   airports separately is a business decision; it is not made in the code.
 
+- **F25 Two ranked lists, split on zone type (decided in review).** A naive single ranking is
+  **100% airports** in its top 20; the first neighbourhood cell is overall rank 45. The client's
+  lever at JFK/LGA is not "incentivise drivers to go there" but staging-lot throughput and Port
+  Authority dispatch: a different owner and a different intervention. So the same rule (excess late
+  trips, n >= 200) ranks two lists partitioned by `dim_zone.is_airport`, derived from the zone
+  lookup's `service_zone` (Airports = 132 JFK, 138 LGA; EWR = 1 Newark), never from the numbers.
+  Neighbourhood cells are the incentive decision (top 10); airport cells are escalated to airport
+  ops (top 5), shown with the cell's request-to-arrival median beside the zone's month median
+  (LGA Wed 23:00: 10.5 vs 4.5 min, dwell 0.92 min, so the delay is supply-side). `overall_rank`
+  stays in incentive_cells.csv so the split is auditable. Demo beat: the first answer the data
+  gives you is not the answer the ops lead can act on.
+- **F26 metrics.csv holds reporting grains only** (202 rows): month, company, company x WAV,
+  borough, borough x hour, rainy/dry, rule. Cell-level numbers live only in incentive_cells.csv.
+- **F27 Rain is a weak lever (reported as a finding).** +0.9 points raw, +1.1 within hour of day,
+  against a 3.4%-37.8% range across borough x hour. evidence.md states it in those words; the
+  sentence is generated from the numbers, so it changes if a future month disagrees.
+
+### Phase 5 hardening decisions
+
+- **Atomic outputs.** Every stage writes into `outputs/.staging/<name>-<run_id>/`. Only when all
+  seven stages succeed is it swapped into `outputs/<name>/` (the old directory is renamed aside
+  first, then removed; its `failed/` history is carried over). A failed or interrupted run deletes
+  its staging directory, leaves `outputs/<name>/` byte-identical, and writes
+  `outputs/<name>/failed/run_manifest_<run_id>.json` (git-ignored: failed manifests are never
+  committed). `docs/validation_rules.md` is rewritten only after a successful full-month publish.
+- **Exit codes.** 0 success; 2 source unavailable, incomplete, or schema drift (a missing expected
+  column); 3 trust floor (the message carries all three M5 lines); 4 internal error; 130
+  interrupted. A new, unexpected column is a WARN, not a failure.
+- **Offline sample runs.** `--sample-file` reads trips, zones and weather from local files
+  (`config.yml sample`), so tests, CI and `make demo` never touch the network or `data/raw/`.
+- **Resource envelope.** DuckDB `memory_limit: 4GB`, `threads: 4`, spill to
+  `data/warehouse/tmp`. Measured on the 2026-07 full month: 2:27 wall time, **peak process RSS
+  5.7 GB**. The DuckDB limit caps its buffer pool, not every allocation, so a machine with less
+  than ~6 GB free should lower `memory_limit` (DuckDB then spills more and runs slower).
+- **The warehouse is a working store, not an output.** A failed run can leave
+  `data/warehouse/<month>.duckdb` with partly rebuilt `stage/clean/model` schemas; the next run
+  rebuilds them from `raw.*`, and `raw.*` itself is swapped in atomically by load_raw.
+
 ### Notes for the demo judgement call (to finalise after review)
 
 Timestamps don't always mean what their field names say. Three of them fail in different ways:

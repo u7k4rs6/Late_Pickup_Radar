@@ -27,7 +27,10 @@ M4_METRICS = (
 )
 DECIMALS = 6
 CELL_COLUMNS = [
+    "list",
     "rank",
+    "overall_rank",
+    "is_airport",
     "borough",
     "zone",
     "pu_zone_id",
@@ -40,7 +43,11 @@ CELL_COLUMNS = [
     "late_rate_excess",
     "excess_late_trips",
     "p90_wait_minutes",
+    "median_request_to_arrival_minutes",
+    "zone_median_request_to_arrival_minutes",
+    "median_dwell_minutes",
 ]
+ROUNDED_CELL_COLUMNS = CELL_COLUMNS[CELL_COLUMNS.index("late_rate") :]
 
 
 @dataclass
@@ -115,15 +122,10 @@ def compute_metrics(
         raise StageCheckFailed(f"metrics.csv is missing {sorted(missing)}")
 
     cells = con.execute(
-        f"SELECT {', '.join(CELL_COLUMNS)} FROM model.incentive_cells WHERE eligible ORDER BY rank"
+        f"SELECT {', '.join(CELL_COLUMNS)} FROM model.incentive_cells WHERE eligible "
+        "ORDER BY list DESC, rank"
     ).df()
-    for c in (
-        "late_rate",
-        "city_late_rate",
-        "late_rate_excess",
-        "excess_late_trips",
-        "p90_wait_minutes",
-    ):
+    for c in ROUNDED_CELL_COLUMNS:
         cells[c] = cells[c].round(DECIMALS)
 
     out_dir.mkdir(parents=True, exist_ok=True)

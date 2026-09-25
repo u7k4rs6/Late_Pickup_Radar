@@ -22,7 +22,6 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-import duckdb
 import pyarrow.parquet as pq
 import requests
 from rich.progress import (
@@ -196,9 +195,10 @@ def check_trips(path: Path, month: str, cfg: dict[str, Any]) -> dict[str, Any]:
         raise CompletenessError(f"trips: Parquet footer unreadable: {exc}") from exc
     if meta.num_rows <= 0:
         raise CompletenessError("trips: Parquet file has 0 rows")
+    schema = check_schema(meta.schema.to_arrow_schema().names, cfg)
 
     tz = cfg["weather"]["local_timezone"]
-    con = duckdb.connect()
+    con = db.connect(cfg)
     rows = con.execute(db.render("00_trips_completeness.sql", trips_path=path)).fetchall()
     con.close()
     counts = {hour: n for hour, n in rows}
@@ -215,6 +215,7 @@ def check_trips(path: Path, month: str, cfg: dict[str, Any]) -> dict[str, Any]:
     days_with_rows = {h.date() for h in counts if h in expected_set}
 
     result = {
+        "schema": schema,
         "footer_rows": meta.num_rows,
         "row_groups": meta.num_row_groups,
         "created_by": meta.created_by,
@@ -249,6 +250,32 @@ def check_trips(path: Path, month: str, cfg: dict[str, Any]) -> dict[str, Any]:
             f"trips: {len(zero_hours)} hour(s) of {month} have no rows, first: {zero_hours[:3]}"
         )
     return result
+
+
+def check_schema(columns: list[str], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Missing expected column = schema drift = exit 2; an extra column is only a WARN."""
+    expected = cfg["sources"]["trips_expected_columns"]
+    missing = [c for c in expected if c not in columns]
+    extra = [c for c in columns if c not in expected]
+    if missing:
+        raise CompletenessError(f"trips: schema drift, missing column(s) {missing}")
+    if extra:
+        log.warning("trips: new column(s) not in the source map, ignored by rules: %s", extra)
+    return {"columns": len(columns), "missing": missing, "extra": extra}
+
+
+def local_source(name: str, path: Path) -> dict[str, Any]:
+    """Manifest entry for a local (offline) source file used by --sample-file runs."""
+    if not path.exists():
+        raise SourceUnavailable(f"{name}: local sample source {path} does not exist")
+    return {
+        "source": name,
+        "url": None,
+        "local_file": repo_relative(path),
+        "bytes_written": path.stat().st_size,
+        "sha256": sha256_file(path),
+        "cached": True,
+    }
 
 
 def check_zones(path: Path, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -407,51 +434,66 @@ def ingest(
     month_dir = raw_dir / month
     sources: dict[str, Any] = {}
 
+    counts_path: Path | None = None
     if sample_file is not None:
+        # Offline: every source is a local file; nothing is downloaded or written to data/raw.
+        from pipeline.config import resolve_path
+
         trips_path = sample_file
-        sources["trips"] = {
-            "source": "trips",
-            "url": None,
-            "local_file": repo_relative(sample_file),
-            "bytes_written": sample_file.stat().st_size,
-            "sha256": sha256_file(sample_file),
-            "cached": True,
-        }
-        log.info("trips: using sample file %s (no download)", sample_file)
+        sources["trips"] = local_source("trips", sample_file)
+        zones_path = resolve_path(cfg["sample"]["zones_file"])
+        sources["zones"] = local_source("zones", zones_path)
+        weather_path: Path | None = None
+        if no_weather:
+            log.warning("weather: skipped (--no-weather); weather metrics will be UNAVAILABLE")
+            sources["weather"] = {"status": "UNAVAILABLE", "reason": "--no-weather"}
+        else:
+            weather_path = resolve_path(cfg["sample"]["weather_file"])
+            sources["weather"] = local_source("weather", weather_path)
+            _check_json(weather_path)
+        sources["expected_counts"] = {"status": "not applicable (sample file)"}
+        log.info("sample run: trips, zones and weather from local files (no network)")
     else:
         url = src["trips_url_template"].format(month=month)
         trips_path = month_dir / f"fhvhv_tripdata_{month}.parquet"
         sources["trips"] = fetch("trips", url, trips_path, dl, force=force, quiet=quiet)
 
-    zones_path = month_dir / "taxi_zone_lookup.csv"
-    sources["zones"] = fetch("zones", src["zones_url"], zones_path, dl, force=force, quiet=quiet)
-
-    weather_path: Path | None = None
-    if no_weather:
-        log.warning("weather: skipped (--no-weather); weather metrics will be UNAVAILABLE")
-        sources["weather"] = {"status": "UNAVAILABLE", "reason": "--no-weather"}
-    else:
-        weather_path = month_dir / "weather_openmeteo.json"
-        sources["weather"] = fetch(
-            "weather",
-            weather_url(month, cfg),
-            weather_path,
-            dl,
-            force=force,
-            quiet=quiet,
-            check=_check_json,
+        zones_path = month_dir / "taxi_zone_lookup.csv"
+        sources["zones"] = fetch(
+            "zones", src["zones_url"], zones_path, dl, force=force, quiet=quiet
         )
 
-    # S5 is a sanity band only: if TLC's site refuses the request, WARN and carry on.
-    counts_path: Path | None = month_dir / "data_reports_monthly.csv"
-    try:
-        sources["expected_counts"] = fetch(
-            "expected_counts", src["expected_counts_url"], counts_path, dl, force=force, quiet=quiet
-        )
-    except SourceUnavailable as exc:
-        log.warning("expected_counts unavailable, sanity band skipped: %s", exc)
-        sources["expected_counts"] = {"status": "unavailable", "error": str(exc)}
-        counts_path = None
+        weather_path = None
+        if no_weather:
+            log.warning("weather: skipped (--no-weather); weather metrics will be UNAVAILABLE")
+            sources["weather"] = {"status": "UNAVAILABLE", "reason": "--no-weather"}
+        else:
+            weather_path = month_dir / "weather_openmeteo.json"
+            sources["weather"] = fetch(
+                "weather",
+                weather_url(month, cfg),
+                weather_path,
+                dl,
+                force=force,
+                quiet=quiet,
+                check=_check_json,
+            )
+
+        # S5 is a sanity band only: if TLC's site refuses the request, WARN and carry on.
+        counts_path = month_dir / "data_reports_monthly.csv"
+        try:
+            sources["expected_counts"] = fetch(
+                "expected_counts",
+                src["expected_counts_url"],
+                counts_path,
+                dl,
+                force=force,
+                quiet=quiet,
+            )
+        except SourceUnavailable as exc:
+            log.warning("expected_counts unavailable, sanity band skipped: %s", exc)
+            sources["expected_counts"] = {"status": "unavailable", "error": str(exc)}
+            counts_path = None
 
     completeness: dict[str, Any] = {"trips": check_trips(trips_path, month, cfg)}
     completeness["zones"] = check_zones(zones_path, cfg)
@@ -467,13 +509,15 @@ def ingest(
     return IngestResult(month, trips_path, zones_path, weather_path, sources, completeness)
 
 
-def load_raw(result: IngestResult, warehouse_dir: Path, db_name: str) -> dict[str, Any]:
+def load_raw(
+    result: IngestResult, warehouse_dir: Path, db_name: str, cfg: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Build data/warehouse/<db_name>.duckdb with raw.* tables; swap it in atomically."""
     warehouse_dir.mkdir(parents=True, exist_ok=True)
     final = warehouse_dir / f"{db_name}.duckdb"
     tmp = warehouse_dir / f"{db_name}.duckdb.tmp"
     tmp.unlink(missing_ok=True)
-    con = duckdb.connect(str(tmp))
+    con = db.connect(cfg, tmp)
     try:
         db.run_file(
             con, "01_load_raw.sql", trips_path=result.trips_path, zones_path=result.zones_path

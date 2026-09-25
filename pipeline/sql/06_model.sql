@@ -11,6 +11,7 @@ SELECT
     Zone                                    AS zone,
     service_zone,
     LocationID IN {unknown_zone_ids}        AS is_unknown,   -- 264 Unknown, 265 Outside of NYC
+    service_zone IN {airport_service_zones} AS is_airport,   -- from the lookup: 1, 132, 138
     'taxi_zone_lookup.csv'                  AS source
 FROM raw.zones
 ORDER BY zone_id;
@@ -100,6 +101,7 @@ SELECT
     isodow(request_datetime)                                   AS request_dow,
     hour(request_datetime)                                     AS request_hour,
     wait_minutes,
+    epoch(on_scene_datetime - request_datetime) / 60.0         AS request_to_arrival_minutes,
     dwell_minutes,
     trip_minutes,                                              -- from trip_time (F15)
     timestamp_trip_minutes,

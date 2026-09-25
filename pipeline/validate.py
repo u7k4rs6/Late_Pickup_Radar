@@ -111,6 +111,7 @@ class ValidationResult:
     trust: dict[str, Any]
     rule_counts: list[dict[str, Any]]
     report_path: Path
+    rules_doc: str  # docs/validation_rules.md content; written only when a full run publishes
 
 
 def _counts(con: duckdb.DuckDBPyConnection, rules: dict[str, Any], rows_in: int) -> list[dict]:
@@ -196,7 +197,6 @@ def validate(
     rules: dict[str, Any],
     out_dir: Path,
     month_bounds: tuple[str, str],
-    docs_path: Path | None = None,
 ) -> ValidationResult:
     sql = render_validate_sql(rules, month_bounds)
     con.execute(sql)
@@ -242,16 +242,21 @@ def validate(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "validation_report.md"
     path.write_text(report)
-    if docs_path is not None:
-        docs_path.write_text(render_rules_doc(rules, sql))
     log.info("validation report written: %s", path.name)
 
     if trusted < floor:
-        raise ValidationFailed(
-            f"trusted-row share {trusted:.3%} is below the floor {floor:.0%}: "
-            "metrics will not be published"
+        exc = ValidationFailed(
+            f"trusted-row share {trusted:.3%} is below the floor {floor:.0%}, so metrics will "
+            f"not be published. Data behind the numbers: trusted-row share {trusted:.3%}, "
+            f"wait-eligible share {trust['wait_eligible_share']:.3%}, dwell coverage "
+            f"{trust['dwell_coverage']:.3%} of {rows_in:,} rows in; {rows_q:,} rows "
+            "quarantined (per-rule counts in the failed run manifest; rows in quarantine.trips)."
         )
-    return ValidationResult(rows_in, rows_clean, rows_q, trusted, trust, counts, path)
+        exc.trust, exc.rule_counts = trust, counts
+        raise exc
+    return ValidationResult(
+        rows_in, rows_clean, rows_q, trusted, trust, counts, path, render_rules_doc(rules, sql)
+    )
 
 
 def trust_shares(con, rules: dict[str, Any], rows_in: int, rows_clean: int) -> dict[str, Any]:
