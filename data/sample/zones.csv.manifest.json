@@ -1,0 +1,8 @@
+{
+  "bytes": 12331,
+  "file": "zones.csv",
+  "sha256": "1a99e105092230f8620f301edcca7f80d3080642ff404d28ed957d3fa222c8ed",
+  "source": "copied byte-for-byte from data/raw/2026-07/taxi_zone_lookup.csv",
+  "source_sha256": "1a99e105092230f8620f301edcca7f80d3080642ff404d28ed957d3fa222c8ed",
+  "source_url": "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+}

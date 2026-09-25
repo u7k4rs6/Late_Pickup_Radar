@@ -39,6 +39,13 @@ from pipeline.logging_setup import log
 from pipeline.manifest import read_json, repo_relative, sha256_file, utc_now, write_json_atomic
 
 NOT_PUBLISHED_STATUSES = (403, 404)  # CloudFront/S3 answers 403 for a missing object
+_network_allowed = True  # False for the whole of an offline run (set at the start of ingest)
+
+
+class NetworkInOfflineMode(RuntimeError):
+    """A network request was attempted during an offline run: a bug, never allowed."""
+
+
 RECORDED_HEADERS = ("Content-Length", "Content-Type", "ETag", "Last-Modified", "Date")
 
 
@@ -107,6 +114,8 @@ def fetch(
     `check` validates the .part file before it is renamed into place (e.g. JSON parses), so a
     malformed response never becomes a cached raw file.
     """
+    if not _network_allowed:
+        raise NetworkInOfflineMode(f"{name}: network access attempted in offline mode ({url})")
     manifest_path = dest.with_name(dest.name + ".manifest.json")
     if dest.exists() and manifest_path.exists() and not force:
         cached = read_json(manifest_path)
@@ -265,16 +274,30 @@ def check_schema(columns: list[str], cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def local_source(name: str, path: Path) -> dict[str, Any]:
-    """Manifest entry for a local (offline) source file used by --sample-file runs."""
+    """An offline source: a local file verified against its .manifest.json sha256."""
+    manifest = path.with_name(path.name + ".manifest.json")
     if not path.exists():
-        raise SourceUnavailable(f"{name}: local sample source {path} does not exist")
+        raise SourceUnavailable(f"{name}: local source {repo_relative(path)} does not exist")
+    if not manifest.exists():
+        raise SourceUnavailable(f"{name}: {repo_relative(path)} has no .manifest.json to verify")
+    expected = read_json(manifest)["sha256"]
+    actual = sha256_file(path)
+    if actual != expected:
+        raise SourceUnavailable(
+            f"{name}: {repo_relative(path)} sha256 {actual[:12]}… does not match its manifest "
+            f"({expected[:12]}…)"
+        )
+    log.info(
+        "%s: SOURCE (local sample) %s, sha256 %s… verified", name, repo_relative(path), actual[:12]
+    )
     return {
         "source": name,
         "url": None,
         "local_file": repo_relative(path),
         "bytes_written": path.stat().st_size,
-        "sha256": sha256_file(path),
+        "sha256": actual,
         "cached": True,
+        "offline": True,
     }
 
 
@@ -428,31 +451,45 @@ def ingest(
     force: bool = False,
     no_weather: bool = False,
     sample_file: Path | None = None,
+    offline: bool = False,
     quiet: bool = True,
 ) -> IngestResult:
+    """Fetch (or, offline, verify) every source and check completeness.
+
+    offline=True, implied by sample_file: all four sources are local files from
+    config.yml `sample`, checksum-verified; any network attempt raises NetworkInOfflineMode.
+    """
+    global _network_allowed
+    from pipeline.config import resolve_path
+
+    offline = offline or sample_file is not None
+    _network_allowed = not offline
     src, dl = cfg["sources"], cfg["download"]
     month_dir = raw_dir / month
     sources: dict[str, Any] = {}
 
     counts_path: Path | None = None
-    if sample_file is not None:
-        # Offline: every source is a local file; nothing is downloaded or written to data/raw.
-        from pipeline.config import resolve_path
-
-        trips_path = sample_file
-        sources["trips"] = local_source("trips", sample_file)
-        zones_path = resolve_path(cfg["sample"]["zones_file"])
+    if offline:
+        # Every source is a local, checksum-verified file; nothing is downloaded or written to
+        # data/raw.
+        smp = cfg["sample"]
+        trips_path = sample_file or resolve_path(smp["trips_file"])
+        sources["trips"] = local_source("trips", trips_path)
+        zones_path = resolve_path(smp["zones_file"])
         sources["zones"] = local_source("zones", zones_path)
         weather_path: Path | None = None
         if no_weather:
             log.warning("weather: skipped (--no-weather); weather metrics will be UNAVAILABLE")
             sources["weather"] = {"status": "UNAVAILABLE", "reason": "--no-weather"}
         else:
-            weather_path = resolve_path(cfg["sample"]["weather_file"])
+            weather_path = resolve_path(smp["weather_file"])
             sources["weather"] = local_source("weather", weather_path)
             _check_json(weather_path)
-        sources["expected_counts"] = {"status": "not applicable (sample file)"}
-        log.info("sample run: trips, zones and weather from local files (no network)")
+        counts_local = resolve_path(smp["expected_counts_file"])
+        sources["expected_counts"] = {
+            **local_source("expected_counts", counts_local),
+            "status": "verified; sanity band not applicable to a sample",
+        }
     else:
         url = src["trips_url_template"].format(month=month)
         trips_path = month_dir / f"fhvhv_tripdata_{month}.parquet"

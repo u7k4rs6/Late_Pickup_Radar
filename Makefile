@@ -5,7 +5,7 @@ PY     := $(VENV)/bin/python
 MONTH  ?=
 RULE   ?= R03
 
-.PHONY: setup run test sample lint demo demo-rerun demo-fail demo-show demo-reset
+.PHONY: setup run run-offline test sample lint demo demo-rerun demo-fail demo-show demo-reset
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -25,8 +25,13 @@ lint:
 	$(PY) -m ruff format --check pipeline tests
 
 # Targets below are implemented in later phases (see docs/PRD.md Section 10).
+# Cut data/sample/ from the real month (needs a full `make run MONTH=2026-07` first).
 sample:
-	@echo "make sample: not implemented yet (phase 6)" && exit 1
+	$(PY) -m pipeline sample
+
+# The whole pipeline on the committed sample, no network.
+run-offline:
+	$(PY) -m pipeline run --month 2026-07 --offline
 
 demo demo-rerun demo-fail demo-show demo-reset:
 	@echo "make $@: not implemented yet (phase 8)" && exit 1

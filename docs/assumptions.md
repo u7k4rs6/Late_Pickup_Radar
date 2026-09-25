@@ -203,6 +203,24 @@ Every number below is from `outputs/2026-07/profile.md`. Rule-level evidence is 
   `data/warehouse/<month>.duckdb` with partly rebuilt `stage/clean/model` schemas; the next run
   rebuilds them from `raw.*`, and `raw.*` itself is swapped in atomically by load_raw.
 
+### Phase 6 decisions (sample, offline, CI)
+
+- **The sample is cut from the real month, never synthesised.** `md5(business key) % 400 = 0`
+  gives 52,393 of 20,921,249 rows. For the four rules with real examples in the month but none in
+  the hash sample, their real rows were appended: R01, R03 and R06 got 5 each, R02 got both of its
+  2. The total is 52,410 rows. R04, R05 and R09 have no real example this month and get no rows;
+  the per-rule synthetic tests cover them. `data/sample/README.md` lists every rule's month and
+  sample counts.
+- **Reproducible.** Two consecutive `make sample` builds produced byte-identical files, manifests
+  included (the Parquet is written single-threaded; manifests carry no timestamps). `make sample`
+  needs a full-month run first (it reads `data/raw/` and the validated warehouse).
+- **Offline means offline.** `--offline`, implied by `--sample-file`, reads all four sources from
+  `data/sample/`, each verified against its `.manifest.json` sha256 (a mismatch is exit 2) and
+  logged as `SOURCE (local sample)`. `fetch()` raises `NetworkInOfflineMode` if called during an
+  offline run. The suite also passes inside a Linux network namespace with no interfaces.
+- **Speed.** The offline run on the committed sample takes 3.1 s wall at 392 MB peak RSS with
+  default console output (budget: 30 s).
+
 ### Notes for the demo judgement call (to finalise after review)
 
 Timestamps don't always mean what their field names say. Three of them fail in different ways:

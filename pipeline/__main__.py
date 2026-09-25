@@ -58,7 +58,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--force", action="store_true", help="re-download even if cached")
     run.add_argument("--quiet", action="store_true", help="plain console output (CI)")
+    run.add_argument(
+        "--offline",
+        action="store_true",
+        help="read all four sources from data/sample/ (checksum-verified); no network at all. "
+        "Implied by --sample-file",
+    )
     run.add_argument("--config", metavar="PATH", help="config file (default: config.yml)")
+
+    smp = sub.add_parser("sample", help="build data/sample/ from the real, validated month")
+    smp.add_argument("--month", type=month_arg, help="default: config.yml sample.month")
+    smp.add_argument("--config", metavar="PATH", help="config file (default: config.yml)")
 
     show = sub.add_parser("show", help="read-only inspection of a finished run")
     show.add_argument("target", choices=SHOW_TARGETS)
@@ -92,6 +102,10 @@ def run(args: argparse.Namespace) -> int:
 
     cfg = load_config(Path(args.config) if args.config else None)
     sample_file = Path(args.sample_file).resolve() if args.sample_file else None
+    if args.offline and sample_file is None:
+        from pipeline.config import resolve_path
+
+        sample_file = resolve_path(cfg["sample"]["trips_file"])
     if sample_file:
         tag, out_name = f"{args.month}-sample-file", "demo"
     elif args.sample is not None:
@@ -135,6 +149,7 @@ def run(args: argparse.Namespace) -> int:
                 force=args.force,
                 no_weather=args.no_weather,
                 sample_file=sample_file,
+                offline=args.offline,
                 quiet=args.quiet,
             )
             footer = result.footer_rows
@@ -306,9 +321,25 @@ def show(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def sample(args: argparse.Namespace) -> int:
+    from pipeline.config import load_config, resolve
+    from pipeline.logging_setup import setup_logging
+    from pipeline.sample import make_sample
+
+    cfg = load_config(Path(args.config) if args.config else None)
+    month = args.month or cfg["sample"]["month"]
+    setup_logging(resolve(cfg, "logs_dir"), f"{month}-sample", quiet=False)
+    try:
+        make_sample(month, cfg)
+    except PipelineError as exc:
+        print(f"sample: {exc}", file=sys.stderr)
+        return exc.exit_code
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return run(args) if args.command == "run" else show(args)
+    return {"run": run, "show": show, "sample": sample}[args.command](args)
 
 
 if __name__ == "__main__":

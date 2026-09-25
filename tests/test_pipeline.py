@@ -22,7 +22,8 @@ from test_ingest import FakeResponse
 from pipeline import ingest
 from pipeline import metrics as metrics_module
 from pipeline.__main__ import main
-from pipeline.config import load_config
+from pipeline.config import ROOT, load_config
+from pipeline.sample import write_manifest
 
 MONTH = "2026-07"
 TZ = "America/New_York"
@@ -64,7 +65,16 @@ def env(tmp_path):
             }
         )
     )
-    cfg["sample"] = {"zones_file": str(zones), "weather_file": str(weather)}
+    counts = tmp_path / "data_reports_monthly.csv"
+    counts.write_text('Month/Year,License Class,Trips Per Day\n2026-07,FHV - High Volume,"25"\n')
+    cfg["sample"] = {
+        **cfg["sample"],
+        "zones_file": str(zones),
+        "weather_file": str(weather),
+        "expected_counts_file": str(counts),
+    }
+    for f in (zones, weather, counts):
+        write_manifest(f)
 
     rows = month_trips(ingest.wall_clock_hours(MONTH, TZ))
     t = datetime(2026, 7, 15, 12, 0, 7)
@@ -78,6 +88,7 @@ def env(tmp_path):
     )
     rows.append(base_row(request_datetime=t, on_scene_datetime=t - timedelta(minutes=3)))  # R12
     trips = write_parquet(rows, tmp_path / "sample.parquet")
+    write_manifest(trips)
 
     def config(**overrides) -> Path:
         c = json.loads(json.dumps(cfg))
@@ -251,3 +262,48 @@ def test_a_live_run_holding_the_lock_blocks_a_second_run(env):
     assert run(env, env["config"]()) == 4
     assert (staging_root / "demo-live").exists()  # the live run's staging is not swept
     assert not (env["outputs"] / "demo").exists()
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Any socket connection attempt fails the test."""
+    import socket
+
+    def refuse(*args, **kwargs):
+        raise AssertionError(f"network access attempted: {args}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+
+
+def test_committed_sample_runs_offline_with_the_network_blocked(env, no_network):
+    """The real committed data/sample/ drives the whole pipeline with no network at all."""
+    cfg = load_config()
+    repo_sample = {k: str(ROOT / v) for k, v in cfg["sample"].items() if k.endswith("_file")}
+    config = env["config"]()
+    c = yaml.safe_load(config.read_text())
+    c["sample"].update(repo_sample)
+    config.write_text(yaml.safe_dump(c))
+    code = main(["run", "--month", MONTH, "--offline", "--quiet", "--config", str(config)])
+    assert code == 0
+    demo = env["outputs"] / "demo"
+    manifest = json.loads((demo / "run_manifest.json").read_text())
+    assert all(src.get("offline") for src in manifest["sources"].values())
+    assert "Top 10 neighbourhood cells" in (demo / "evidence.md").read_text()
+
+
+def test_offline_source_with_a_bad_checksum_exits_2(env, no_network):
+    c = yaml.safe_load(env["config"]().read_text())
+    zones = Path(c["sample"]["zones_file"])
+    zones.write_text(zones.read_text().replace("Z1", "Z-tampered"))
+    config = env["config"]()
+    assert run(env, config) == 2
+    [failed] = (env["outputs"] / "demo" / "failed").glob("*.json")
+    assert "does not match its manifest" in json.loads(failed.read_text())["error"]
+
+
+def test_fetch_refuses_the_network_in_offline_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, "_network_allowed", False)
+    with pytest.raises(ingest.NetworkInOfflineMode):
+        ingest.fetch("zones", "https://example.test/z.csv", tmp_path / "z.csv", {})

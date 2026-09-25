@@ -1,0 +1,76 @@
+{
+  "appended_real_rows": {
+    "R01": [
+      250,
+      81637,
+      124586,
+      144450,
+      242124
+    ],
+    "R02": [
+      14144387,
+      17338660
+    ],
+    "R03": [
+      364778,
+      416183,
+      432779,
+      4242059,
+      4252297
+    ],
+    "R06": [
+      1358205,
+      1468067,
+      2008040,
+      2095297,
+      2896145
+    ]
+  },
+  "bytes": 1723346,
+  "copied_sources": {
+    "expected_counts_file": "data/sample/data_reports_monthly.csv",
+    "weather_file": "data/sample/weather_sample.json",
+    "zones_file": "data/sample/zones.csv"
+  },
+  "file": "hvfhv_sample.parquet",
+  "hash_sample_rows": 52393,
+  "method": "md5(concat_ws('|', hvfhs_license_num, dispatching_base_num, pickup_datetime, dropoff_datetime, PULocationID, DOLocationID, trip_miles)) % 400 = 0",
+  "month": "2026-07",
+  "rows": 52410,
+  "rule_rows_in_month": {
+    "R01": 291,
+    "R02": 2,
+    "R03": 44,
+    "R04": 0,
+    "R05": 0,
+    "R06": 42,
+    "R07": 323291,
+    "R08": 1245,
+    "R09": 0,
+    "R10": 1733,
+    "R11": 4331,
+    "R12": 366752,
+    "R13": 1013281,
+    "R14": 655446
+  },
+  "rule_rows_in_sample": {
+    "R01": 5,
+    "R02": 2,
+    "R03": 5,
+    "R04": 0,
+    "R05": 0,
+    "R06": 5,
+    "R07": 819,
+    "R08": 2,
+    "R09": 0,
+    "R10": 3,
+    "R11": 8,
+    "R12": 915,
+    "R13": 2508,
+    "R14": 1643
+  },
+  "sha256": "827c9b583f485d89d2ad1d772a1af0f30a50dc722d84c207ee7b3ead91440ed6",
+  "source_file": "data/raw/2026-07/fhvhv_tripdata_2026-07.parquet",
+  "source_rows": 20921249,
+  "source_sha256": "8da280d9d23813aae02a6e1d1d1caa8b96eb5e8d38efcbc9a570faf1e418f5a8"
+}

@@ -1,0 +1,8 @@
+{
+  "bytes": 24337,
+  "file": "weather_sample.json",
+  "sha256": "9b0ca1740e60f7bb2cdccc549743fdb9a02c34f9ac728b53697b60e1df8cc516",
+  "source": "copied byte-for-byte from data/raw/2026-07/weather_openmeteo.json",
+  "source_sha256": "9b0ca1740e60f7bb2cdccc549743fdb9a02c34f9ac728b53697b60e1df8cc516",
+  "source_url": "https://archive-api.open-meteo.com/v1/archive?latitude=40.7829&longitude=-73.9654&start_date=2026-07-01&end_date=2026-08-01&hourly=precipitation%2Ctemperature_2m%2Cweather_code&timezone=GMT"
+}

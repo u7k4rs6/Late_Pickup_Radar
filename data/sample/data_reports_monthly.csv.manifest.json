@@ -1,0 +1,8 @@
+{
+  "bytes": 79774,
+  "file": "data_reports_monthly.csv",
+  "sha256": "47fa867bf3a72416b3eaca7770b44313fa5645fb5e8102f77f14c797c38ebf94",
+  "source": "copied byte-for-byte from data/raw/2026-07/data_reports_monthly.csv",
+  "source_sha256": "47fa867bf3a72416b3eaca7770b44313fa5645fb5e8102f77f14c797c38ebf94",
+  "source_url": "https://www.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv"
+}

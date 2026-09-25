@@ -1,13 +1,32 @@
 name: ci
-on: [push, pull_request]
+# Lint + the full test suite on the committed data/sample/. No network is needed: every test is
+# offline (tests/test_pipeline.py fails any socket connection in the offline runs).
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
-      - run: ruff check pipeline tests && ruff format --check pipeline tests
-      - run: pytest -q
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check pipeline tests
+          ruff format --check pipeline tests
+      - name: Test (offline, on data/sample/)
+        run: pytest -q --durations=5
+      - name: Offline pipeline run on the committed sample
+        run: python -m pipeline run --month 2026-07 --offline --quiet

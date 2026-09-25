@@ -19,10 +19,17 @@ duckdb:
   threads: 2
   temp_directory: data/warehouse/tmp
 
-# Offline sources for --sample-file runs (make demo, tests, CI): no network at all.
+# Offline sources (--offline, and implied by --sample-file): make demo, tests and CI read all four
+# sources from data/sample/, each checksum-verified against its .manifest.json. No network at all.
+# Built by `make sample` (pipeline/sample.py) from the real month; see data/sample/README.md.
 sample:
+  month: 2026-07
+  trips_file: data/sample/hvfhv_sample.parquet
   zones_file: data/sample/zones.csv
   weather_file: data/sample/weather_sample.json
+  expected_counts_file: data/sample/data_reports_monthly.csv
+  modulus: 400                     # md5(business key) % 400 = 0: ~1/400 of the month (~52k rows)
+  append_per_rule: 5               # real rows appended for a rule the hash sample happens to miss
 
 sources:
   # Verified in phase 1 (2026-09-24): see docs/source_map.md for status codes and headers.
