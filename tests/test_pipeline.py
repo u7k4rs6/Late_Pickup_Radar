@@ -145,6 +145,7 @@ def test_success_publishes_atomically_and_rerun_is_byte_identical(env):
     first = snapshot(demo)
     for f in (
         "metrics.csv",
+        "evidence.html",
         "incentive_cells.csv",
         "evidence.md",
         "validation_report.md",
@@ -307,3 +308,40 @@ def test_fetch_refuses_the_network_in_offline_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "_network_allowed", False)
     with pytest.raises(ingest.NetworkInOfflineMode):
         ingest.fetch("zones", "https://example.test/z.csv", tmp_path / "z.csv", {})
+
+
+def test_evidence_html_is_one_static_page_with_inline_charts(env):
+    assert run(env, env["config"]()) == 0
+    page = (env["outputs"] / "demo" / "evidence.html").read_text()
+    assert page.count('src="data:image/png;base64,') == 3
+    assert "<script" not in page.lower()
+    assert "Top 10 neighbourhood cells" in page and "escalate to airport ops" in page
+    assert "Dwell coverage (on_scene &lt; pickup)" in page
+
+
+def test_show_rule_prints_real_rows_of_a_flag_rule(env, capsys):
+    config = env["config"]()
+    assert run(env, config) == 0
+    code = main(
+        [
+            "show",
+            "rule",
+            "--rule",
+            "R12",
+            "--scope",
+            "demo",
+            "--month",
+            MONTH,
+            "--config",
+            str(config),
+        ]
+    )
+    assert code == 0
+
+
+def test_show_quarantine_refuses_a_flag_rule(env):
+    config = env["config"]()
+    assert (
+        main(["show", "quarantine", "--rule", "R12", "--month", MONTH, "--config", str(config)])
+        == 4
+    )

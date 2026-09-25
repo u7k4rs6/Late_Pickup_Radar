@@ -3,7 +3,6 @@ PYTHON ?= python3
 VENV   := .venv
 PY     := $(VENV)/bin/python
 MONTH  ?=
-RULE   ?= R03
 
 .PHONY: setup run run-offline test sample lint demo demo-rerun demo-fail demo-show demo-reset
 
@@ -24,14 +23,28 @@ lint:
 	$(PY) -m ruff check pipeline tests
 	$(PY) -m ruff format --check pipeline tests
 
-# Targets below are implemented in later phases (see docs/PRD.md Section 10).
-# Cut data/sample/ from the real month (needs a full `make run MONTH=2026-07` first).
-sample:
-	$(PY) -m pipeline sample
+# ---- demo (PRD 15.1): all offline except demo-fail, which needs one HTTPS request ----
+RULE ?= R12
 
-# The whole pipeline on the committed sample, no network.
-run-offline:
+# Sample run with rich output, then the committed full-month decision lists.
+demo:
 	$(PY) -m pipeline run --month 2026-07 --offline
+	@$(PY) -m pipeline show top-cells --month 2026-07
 
-demo demo-rerun demo-fail demo-show demo-reset:
-	@echo "make $@: not implemented yet (phase 8)" && exit 1
+# Same run again: sources verified by checksum, metrics.csv hash compared with the last run.
+demo-rerun:
+	@$(PY) -m pipeline.demo rerun
+
+# A dead source URL into a throwaway directory: exit 2, nothing partial, real outputs untouched.
+demo-fail:
+	@$(PY) -m pipeline.demo fail
+
+# Real rows behind one rule, from the last demo run (default R12).
+demo-show:
+	@$(PY) -m pipeline show rule --rule $(RULE) --n 5 --scope demo --month 2026-07
+
+# Start the demo from clean (the committed full-month outputs are not touched).
+demo-reset:
+	rm -rf outputs/demo outputs/.staging/demo-* outputs/.staging/demo.lock
+	rm -f data/warehouse/2026-07-sample-file.duckdb data/warehouse/2026-07-sample-file.duckdb.wal
+	@echo "demo reset"

@@ -58,7 +58,7 @@ def stage(name: str) -> Iterator[None]:
     idx = STAGES.index(name) + 1
     title = f"{idx}/{len(STAGES)} {name.upper()}"
     console.rule(f"[bold cyan]{title}", characters="━", style="cyan")
-    log.info("stage start: %s", title)
+    log.info("stage start: %s", title, extra=FILE_ONLY)
     t0 = time.perf_counter()
     try:
         yield
@@ -66,7 +66,7 @@ def stage(name: str) -> Iterator[None]:
         log.error("stage failed: %s after %.1fs", title, time.perf_counter() - t0)
         raise
     elapsed = time.perf_counter() - t0
-    log.info("stage end: %s (%.1fs)", title, elapsed)
+    log.info("stage end: %s (%.1fs)", title, elapsed, extra=FILE_ONLY)
     console.print(f"[dim]{name} done in {elapsed:.1f}s[/dim]")
 
 

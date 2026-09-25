@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import time
@@ -12,7 +11,7 @@ from pathlib import Path
 from pipeline import __version__
 from pipeline.errors import EXIT_INTERNAL, EXIT_OK, PipelineError
 
-SHOW_TARGETS = ("quarantine", "flags", "metrics", "manifest", "top-cells")
+SHOW_TARGETS = ("rule", "quarantine", "flags", "metrics", "manifest", "top-cells")
 
 
 def month_arg(value: str) -> str:
@@ -73,8 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", help="read-only inspection of a finished run")
     show.add_argument("target", choices=SHOW_TARGETS)
     show.add_argument("--month", required=True, type=month_arg)
-    show.add_argument("--rule", help="rule id filter, e.g. R03")
+    show.add_argument("--rule", help="rule id, e.g. R12 (for rule / quarantine / flags)")
     show.add_argument("--n", type=int, default=5, help="rows to print")
+    show.add_argument(
+        "--scope",
+        choices=("month", "demo"),
+        default="month",
+        help="month: the full-month run; demo: the last `make demo` (sample) run",
+    )
+    show.add_argument("--config", metavar="PATH", help="config file (default: config.yml)")
     return parser
 
 
@@ -308,17 +314,29 @@ def counts_db_path(cfg: dict, tag: str) -> str:
 
 
 def show(args: argparse.Namespace) -> int:
-    from pipeline.config import load_config, resolve
+    from pipeline import show as sh
+    from pipeline.config import load_config
+    from pipeline.validate import load_rules
 
-    if args.target != "manifest":
-        print(f"show {args.target} is implemented in a later phase.", file=sys.stderr)
-        return EXIT_INTERNAL
-    path = resolve(load_config(), "outputs_dir") / args.month / "run_manifest.json"
-    if not path.exists():
-        print(f"no run manifest at {path}; run the pipeline first.", file=sys.stderr)
-        return EXIT_INTERNAL
-    print(json.dumps(json.loads(path.read_text()), indent=2))
-    return EXIT_OK
+    cfg = load_config(Path(args.config) if args.config else None)
+    if args.target in ("rule", "quarantine", "flags"):
+        if not args.rule:
+            print("show rule/quarantine/flags needs --rule, e.g. --rule R12", file=sys.stderr)
+            return EXIT_INTERNAL
+        want = {"quarantine": "REJECT", "flags": "FLAG"}.get(args.target)
+        rule = next((r for r in load_rules()["rules"] if r["id"] == args.rule.upper()), None)
+        if want and rule and rule["severity"] != want:
+            print(
+                f"{rule['id']} is a {rule['severity']} rule; use `show rule --rule {rule['id']}`",
+                file=sys.stderr,
+            )
+            return EXIT_INTERNAL
+        return sh.show_rule(cfg, args.month, args.rule, args.n, args.scope)
+    if args.target == "top-cells":
+        return sh.show_top_cells(cfg, args.month)
+    if args.target == "metrics":
+        return sh.show_metrics(cfg, args.month, args.scope)
+    return sh.show_manifest(cfg, args.month, args.scope)
 
 
 def sample(args: argparse.Namespace) -> int:

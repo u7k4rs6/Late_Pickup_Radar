@@ -15,4 +15,4 @@ flowchart LR
   RAW -- "SQL: DuckDB load" --> WH[("raw.trips / raw.zones / raw.weather")]
   S4 -. "reference: dim_company" .-> WH
   S5 -. "sanity band: expected rows" .-> WH
-  WH --> DEC["Top zone x hour-of-week cells<br/>for driver incentives"]
+  WH -- "SQL: validate, model, metrics" --> DEC["Two ranked lists, same rule<br/>neighbourhood cells: driver incentives<br/>airport cells: escalate to airport ops"]

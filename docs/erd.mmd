@@ -19,6 +19,7 @@ erDiagram
         timestamp dropoff_ts
         timestamp request_hour_key FK
         double wait_minutes
+        double request_to_arrival_minutes
         double dwell_minutes
         double trip_minutes "from trip_time"
         boolean is_late_8_10_15
@@ -38,6 +39,7 @@ erDiagram
         varchar zone
         varchar service_zone
         boolean is_unknown "264, 265"
+        boolean is_airport "service_zone Airports / EWR"
     }
     dim_company {
         varchar company_id PK "HV0003"

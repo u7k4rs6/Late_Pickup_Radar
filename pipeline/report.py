@@ -373,15 +373,43 @@ def kual(ctx: dict[str, Any], m: Lookup, cfg: dict[str, Any]) -> list[str]:
     ]
 
 
-def console_summary(rows: list[dict], cells: pd.DataFrame, cfg: dict[str, Any], label: str) -> None:
-    con = logging_setup.console
-    t = Table(title="Evidence", show_edge=False, header_style="bold")
-    for c in ("#", "metric", "value", "n"):
-        t.add_column(c, justify="right" if c in ("value", "n") else "left")
+def summary_rows(rows: list[dict]) -> list[dict]:
+    """The five metrics for the console: KPI at three thresholds, M2, M3 with coverage, the
+    hour-adjusted M4 at the configured threshold, and the three M5 lines."""
+    keep = []
     for r in rows:
-        t.add_row(r["#"], r["metric"], r["value"], r["n"])
+        m = r["metric"]
+        if r["#"].startswith("M1") and m.startswith("Late-pickup rate"):
+            keep.append(r)
+        elif r["#"] in ("M2", "M3", "M5"):
+            keep.append(r)
+        elif r["#"] == "M4" and "within hour of day" in m and not keep_m4(keep):
+            keep.append(r)
+    return keep
+
+
+def keep_m4(rows: list[dict]) -> bool:
+    return any(r["#"] == "M4" for r in rows)
+
+
+def console_summary(
+    rows: list[dict], cells: pd.DataFrame, cfg: dict[str, Any], label: str, full_month: bool
+) -> None:
+    con = logging_setup.console
+    t = Table(title=f"Five metrics: {label}", show_edge=False, header_style="bold")
+    for c in ("#", "metric", "value", "n", "data behind it"):
+        t.add_column(c, justify="right" if c in ("value", "n") else "left")
+    for r in summary_rows(rows):
+        t.add_row(r["#"], r["metric"], r["value"], r["n"], r["data behind it"])
     con.print(t)
-    print_top_cells(cells, cfg, label)
+    if full_month:
+        print_top_cells(cells, cfg, label)
+    else:
+        con.print(
+            f"[dim]Incentive cells need n >= {cfg['incentives']['min_cell_trips']} trips per "
+            "zone x day x hour over a full month; a sample cannot rank them. The decision lists "
+            "come from the committed full-month run (make demo prints them next).[/dim]"
+        )
 
 
 def print_top_cells(cells: pd.DataFrame, cfg: dict[str, Any], label: str) -> None:
@@ -477,6 +505,107 @@ def write_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "evidence.md"
     path.write_text("\n".join(parts))
-    console_summary(rows, m.cells, cfg, f"this run ({ctx['scope']})")
-    log.info("evidence written: %s (+ %d charts)", path.name, len(chart_paths))
+    html_path = out_dir / "evidence.html"
+    html_path.write_text(markdown_to_html("\n".join(parts), out_dir, f"Evidence: {month}"))
+    console_summary(rows, m.cells, cfg, ctx["scope"], ctx["scope"] == "full month")
+    log.info("evidence written: %s, %s (+ %d charts)", path.name, html_path.name, len(chart_paths))
     return ReportResult(path, chart_paths)
+
+
+HTML_CSS = """
+:root { --ink: #0b0b0b; --muted: #52514e; --rule: #e6e5e1; --surface: #fcfcfb; --accent: #2a78d6; }
+body { margin: 0; background: var(--surface); color: var(--ink);
+       font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 28px; margin: 8px 0 4px; } h2 { font-size: 20px; margin: 32px 0 8px;
+     border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+p, li { max-width: 80ch; } code { background: #f0efec; padding: 1px 4px; border-radius: 3px; }
+.table { overflow-x: auto; } table { border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+th, td { border-bottom: 1px solid var(--rule); padding: 6px 10px; text-align: left;
+         vertical-align: top; } th { color: var(--muted); font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+img { max-width: 100%; height: auto; border: 1px solid var(--rule); margin: 8px 0; }
+"""
+
+
+def _inline(text: str) -> str:
+    import html
+    import re
+
+    t = html.escape(text)
+    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+    t = re.sub(r"`(.+?)`", r"<code>\1</code>", t)
+    t = re.sub(r"(?<![*\w])_(.+?)_(?![\w])", r"<em>\1</em>", t)
+    return t
+
+
+def _is_num(cell: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"[-+]?[\d,.]+(%| pts| min)?", cell.strip()))
+
+
+def markdown_to_html(md: str, out_dir: Path, title: str) -> str:
+    """evidence.md -> one static HTML page (no JS): the same text, tables and charts, with the
+    PNGs inlined as data URIs so the page is a single self-contained file."""
+    import base64
+    import html
+    import re
+
+    out: list[str] = []
+    lines = md.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("|"):
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append([c.strip() for c in lines[i].strip().strip("|").split(" | ")])
+                i += 1
+            head, body = rows[0], [r for r in rows[2:]]
+            out.append(
+                '<div class="table"><table><thead><tr>'
+                + "".join(f"<th>{_inline(c)}</th>" for c in head)
+                + "</tr></thead><tbody>"
+            )
+            for r in body:
+                out.append(
+                    "<tr>"
+                    + "".join(
+                        f'<td class="num">{_inline(c)}</td>'
+                        if _is_num(c)
+                        else f"<td>{_inline(c)}</td>"
+                        for c in r
+                    )
+                    + "</tr>"
+                )
+            out.append("</tbody></table></div>")
+            continue
+        if line.startswith("- "):
+            out.append("<ul>")
+            while i < len(lines) and lines[i].startswith("- "):
+                out.append(f"<li>{_inline(lines[i][2:])}</li>")
+                i += 1
+            out.append("</ul>")
+            continue
+        img = re.fullmatch(r"!\[(.*?)\]\((.+?)\)", line.strip())
+        if img:
+            data = base64.b64encode((out_dir / img.group(2)).read_bytes()).decode()
+            out.append(
+                f'<img alt="{html.escape(img.group(1))}" src="data:image/png;base64,{data}">'
+            )
+        elif line.startswith("# "):
+            out.append(f"<h1>{_inline(line[2:])}</h1>")
+        elif line.startswith("## "):
+            out.append(f"<h2>{_inline(line[3:])}</h2>")
+        elif line.startswith("### "):
+            out.append(f"<h3>{_inline(line[4:])}</h3>")
+        elif line.strip():
+            out.append(f"<p>{_inline(line)}</p>")
+        i += 1
+    return (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{html.escape(title)}</title><style>{HTML_CSS}</style></head>"
+        "<body><main>\n" + "\n".join(out) + "\n</main></body></html>\n"
+    )
