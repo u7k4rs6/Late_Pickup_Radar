@@ -48,9 +48,9 @@
       "rows": 265
     }
   },
-  "finished_utc": "2026-09-25T06:50:31+00:00",
-  "git_sha": "6ea550b74f4fd0fff3c676fb40027fbf4ab0a16f-dirty",
-  "log_file": "logs/run_2026-07_20260925T122022.log",
+  "finished_utc": "2026-09-25T06:50:51+00:00",
+  "git_sha": "341f9fff01b2707075b530290e0386307392eb63",
+  "log_file": "logs/run_2026-07_20260925T122042.log",
   "parameters": {
     "command": "run",
     "force": false,
@@ -161,7 +161,7 @@
       "rows_out": 20921249
     }
   },
-  "started_utc": "2026-09-25T06:50:22+00:00",
+  "started_utc": "2026-09-25T06:50:42+00:00",
   "status": "success",
-  "wall_time_seconds": 9.3
+  "wall_time_seconds": 9.2
 }
