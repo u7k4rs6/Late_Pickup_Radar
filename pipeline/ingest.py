@@ -509,6 +509,11 @@ def ingest(
     return IngestResult(month, trips_path, zones_path, weather_path, sources, completeness)
 
 
+def _remove_db(path: Path) -> None:
+    for p in (path, path.with_name(path.name + ".wal")):
+        p.unlink(missing_ok=True)
+
+
 def load_raw(
     result: IngestResult, warehouse_dir: Path, db_name: str, cfg: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -530,11 +535,14 @@ def load_raw(
             t: con.execute(f"SELECT count(*) FROM raw.{t}").fetchone()[0]
             for t in ("trips", "zones", "weather")
         }
-    finally:
+    except BaseException:
         con.close()
+        _remove_db(tmp)  # a failed load leaves no half-built database behind
+        raise
+    con.close()
 
     if counts["trips"] != result.footer_rows:
-        tmp.unlink(missing_ok=True)
+        _remove_db(tmp)
         raise StageCheckFailed(
             f"raw.trips has {counts['trips']:,} rows but the Parquet footer says "
             f"{result.footer_rows:,}"
