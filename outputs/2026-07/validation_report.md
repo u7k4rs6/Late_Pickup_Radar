@@ -7,12 +7,18 @@ Rules: `pipeline/validation_rules.yml` (rendered in `docs/validation_rules.md`).
 | step | rows |
 |---|---|
 | rows in (stage.trips) | 20,921,249 |
-| rejected -> quarantine.trips | 378 |
-| rows out (clean.trips) | 20,920,871 |
+| rejected -> quarantine.trips | 376 |
+| rows out (clean.trips) | 20,920,873 |
 
-Reconciliation: clean 20,920,871 + quarantined 378 = 20,921,249 == rows in 20,921,249 ✔
+Reconciliation: clean 20,920,873 + quarantined 376 = 20,921,249 == rows in 20,921,249 ✔
 
-Trusted-row share (M5): **100.00%** (floor 95%).
+## How much data stands behind each number (M5)
+
+| line | rows | share_of_rows_in_pct | note |
+|---|---|---|---|
+| trusted-row share (not quarantined) | 20,920,873 | 99.9982 | floor 95%; hard fail below it |
+| wait-eligible share (rows in the KPI and p90 wait) | 20,554,133 | 98.2452 | clean and not excluded from wait metrics |
+| dwell coverage (on_scene < pickup) | 19,907,891 | 95.1563 | clean and not excluded from dwell metrics |
 
 ## Per rule
 
@@ -20,11 +26,11 @@ Trusted-row share (M5): **100.00%** (floor 95%).
 |---|---|---|---|---|---|---|
 | R05 | REJECT | exact duplicate row | 0 | 0 | 0 |  |
 | R04 | REJECT | pickup outside target month | 0 | 0 | 0 |  |
-| R02 | REJECT | dropoff not after pickup | 2 | 0 | 2 |  |
 | R01 | REJECT | pickup before request, not pre-arranged | 291 | 0.0014 | 291 |  |
 | R03 | REJECT | implausibly long wait | 44 | 0.0002 | 44 |  |
 | R06 | REJECT | implausible implied speed | 41 | 0.0002 | 42 |  |
-| R07 | FLAG | trip_time disagrees with timestamps | 322,986 | 1.5438 |  | trip_duration |
+| R02 | FLAG | dropoff not after pickup (timestamp defect) | 2 | 0 |  | timestamp_duration |
+| R07 | FLAG | trip_time disagrees with timestamps | 322,987 | 1.5438 |  | trip_duration |
 | R08 | FLAG | unknown pickup zone | 1,244 | 0.0059 |  | zone |
 | R09 | FLAG | on_scene missing | 0 | 0 |  | dwell |
 | R10 | FLAG | zero miles with non-trivial duration | 1,731 | 0.0083 |  | speed |
@@ -36,14 +42,22 @@ Trusted-row share (M5): **100.00%** (floor 95%).
 
 ## What this means for the KPI
 
-The headline late-pickup rate (wait > 10 min) is **10.016%** over 20,554,131 trips that can enter wait metrics. R03 removed 44 trips (0.0002% of rows in); if they were kept, the rate would be **10.016%** (+0.00020 points). 366,740 clean trips carry a FLAG that excludes them from wait metrics (R12, pre-arranged); counting their request-to-pickup time as a wait would give **9.924%**. Also dropping every whole-minute request (R14: most remaining reservations plus a random 1/60 of on-demand trips) gives **9.993%**; the gap between that and the headline bounds the effect of reservations R12 does not catch. Trusted-row share is 100.00% against a floor of 95%.
+The headline late-pickup rate (wait > 10 min) is **10.016%** over 20,554,133 trips that can enter wait metrics. R03 removed 44 trips (0.0002% of rows in); if they were kept, the rate would be **10.016%** (+0.00019 points). 366,740 clean trips carry a FLAG that excludes them from wait metrics (R12, pre-arranged); counting their request-to-pickup time as a wait would give **9.924%**. Also dropping every whole-minute request (R14: most remaining reservations plus a random 1/60 of on-demand trips) gives **9.993%**; the gap between that and the headline bounds the effect of reservations R12 does not catch.
 
 | variant | n | late_rate_8_pct | late_rate_10_pct | late_rate_15_pct |
 |---|---|---|---|---|
-| a headline: clean, excluding pre-arranged (R12) | 20,554,131 | 17.5292 | 10.0161 | 2.69492 |
-| b if R03 rejects were kept | 20,554,175 | 17.5294 | 10.0163 | 2.69513 |
-| c if pre-arranged (R12) rows were kept as measured | 20,920,871 | 17.3283 | 9.92366 | 2.70235 |
-| d also excluding whole-minute requests (R14) | 20,199,033 | 17.5075 | 9.9935 | 2.6746 |
+| a headline: clean, excluding pre-arranged (R12) | 20,554,133 | 17.5292 | 10.0161 | 2.69493 |
+| b if R03 rejects were kept | 20,554,177 | 17.5294 | 10.0163 | 2.69514 |
+| c if pre-arranged (R12) rows were kept as measured | 20,920,873 | 17.3283 | 9.92366 | 2.70235 |
+| d also excluding whole-minute requests (R14) | 20,199,035 | 17.5075 | 9.9935 | 2.6746 |
+
+### Whole-minute requests (R14): promote or keep as sensitivity?
+
+Whole-minute rows are late 1.13x as often as the rest (bar: 2.0x), below the promotion bar, so R14 stays a sensitivity line. Excess over the 1-in-60 chance level: 12,529 rows.
+
+| whole_minute_rows | expected_by_chance | excess_over_chance | late_rate_r14_pct | late_rate_rest_pct | ratio |
+|---|---|---|---|---|---|
+| 355,098 | 342,569 | 12,529 | 11.302 | 9.994 | 1.13 |
 
 ### By company and WAV request
 
@@ -51,7 +65,7 @@ WAV is reported as its own line: pre-arranged rows are much more common among Ly
 
 | company | wav_request | clean_rows | rows_in_wait_metrics | wait_coverage_pct | late_rate_10_pct |
 |---|---|---|---|---|---|
-| HV0003 | N | 15,171,479 | 14,904,333 | 98.24 | 11.298 |
+| HV0003 | N | 15,171,480 | 14,904,334 | 98.24 | 11.298 |
 | HV0003 | Y | 43,573 | 41,228 | 94.62 | 27.438 |
-| HV0005 | N | 5,682,643 | 5,598,841 | 98.53 | 6.434 |
+| HV0005 | N | 5,682,644 | 5,598,842 | 98.53 | 6.434 |
 | HV0005 | Y | 23,176 | 9,729 | 41.98 | 34.731 |

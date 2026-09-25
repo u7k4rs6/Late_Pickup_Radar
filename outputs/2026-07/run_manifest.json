@@ -48,9 +48,14 @@
       "rows": 265
     }
   },
-  "finished_utc": "2026-09-25T08:01:04+00:00",
-  "git_sha": "cbf4be84851cbebd361d45a70431f61e456bd830",
-  "log_file": "logs/run_2026-07_20260925T132908.log",
+  "finished_utc": "2026-09-25T08:39:57+00:00",
+  "git_sha": "86fcccfa0e51266088cedac63439389083fd8cbc",
+  "kpi": {
+    "late_minutes": 10,
+    "late_rate": 0.100161,
+    "weather_available": true
+  },
+  "log_file": "logs/run_2026-07_20260925T140642.log",
   "parameters": {
     "command": "run",
     "force": false,
@@ -103,15 +108,6 @@
     },
     {
       "excludes": null,
-      "name": "dropoff not after pickup",
-      "pct_of_rows_in": 0.0,
-      "rows": 2,
-      "rows_matching_incl_overlaps": 2,
-      "rule_id": "R02",
-      "severity": "REJECT"
-    },
-    {
-      "excludes": null,
       "name": "pickup before request, not pre-arranged",
       "pct_of_rows_in": 0.0014,
       "rows": 291,
@@ -138,10 +134,19 @@
       "severity": "REJECT"
     },
     {
+      "excludes": "timestamp_duration",
+      "name": "dropoff not after pickup (timestamp defect)",
+      "pct_of_rows_in": 0.0,
+      "rows": 2,
+      "rows_matching_incl_overlaps": null,
+      "rule_id": "R02",
+      "severity": "FLAG"
+    },
+    {
       "excludes": "trip_duration",
       "name": "trip_time disagrees with timestamps",
       "pct_of_rows_in": 1.5438,
-      "rows": 322986,
+      "rows": 322987,
       "rows_matching_incl_overlaps": null,
       "rule_id": "R07",
       "severity": "FLAG"
@@ -298,19 +303,52 @@
       "rows_in": 20921249,
       "rows_out": 20921249
     },
+    "metrics": {
+      "eligible_cells": 28360,
+      "metrics_csv_sha256": "a15943d9405b1a54fde48b4c7b6af931f534aa15c99aa4c7b7a8e8970816cc46",
+      "rows_in": 20920873,
+      "rows_out": 57183
+    },
+    "model": {
+      "dim_hour_rows": 744,
+      "fact_trip_event_rows": 82670510,
+      "hours_with_weather": 744,
+      "rows_in": 20920873,
+      "rows_out": 20920873,
+      "wet_hours": 98
+    },
     "profile": {
       "rows_in": 20921249,
       "rows_out": 20921249,
       "sample_modulus": null
     },
+    "report": {
+      "charts": [
+        "outputs/2026-07/charts/wait_distribution.png",
+        "outputs/2026-07/charts/late_rate_heatmap.png",
+        "outputs/2026-07/charts/rain_vs_dry.png"
+      ],
+      "evidence": "outputs/2026-07/evidence.md",
+      "rows_in": 57183,
+      "rows_out": 57183
+    },
     "validate": {
       "rows_in": 20921249,
-      "rows_out": 20920871,
-      "rows_quarantined": 378
+      "rows_out": 20920873,
+      "rows_quarantined": 376
     }
   },
-  "started_utc": "2026-09-25T07:59:08+00:00",
+  "started_utc": "2026-09-25T08:36:42+00:00",
   "status": "success",
-  "trusted_row_share": 0.9999819322450586,
-  "wall_time_seconds": 116.5
+  "trust": {
+    "dwell_coverage": 0.9515632168997176,
+    "dwell_rows": 19907891,
+    "rows_in": 20921249,
+    "trusted_row_share": 0.9999820278416456,
+    "trusted_rows": 20920873,
+    "wait_eligible_rows": 20554133,
+    "wait_eligible_share": 0.9824524816850084
+  },
+  "trusted_row_share": 0.9999820278416456,
+  "wall_time_seconds": 195.7
 }
